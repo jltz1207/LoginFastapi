@@ -1,3 +1,3 @@
-# from .users import UserCreate, UserLogin, UserResponse, UserUpdate
+from .users import UserBase, UserCreate, UserUpdate, UserLogin, UserResponse
 
-# __all__ = ["UserCreate", "UserLogin", "UserResponse", "UserUpdate"]
+__all__ = ["UserBase", "UserCreate", "UserUpdate", "UserLogin", "UserResponse"]
