@@ -6,8 +6,10 @@ from datetime import datetime
 
 class UserBase(BaseModel):
     email: EmailStr
-    firstName: Optional[str] = None # can be none
-    lastName: Optional[str] = None # can be none
+    username: str
+    first_name: Optional[str] = None # can be none
+    last_name: Optional[str] = None # can be none
+    
 
 # Model for creating a new user (request body)
 class UserCreate(UserBase):
@@ -15,21 +17,26 @@ class UserCreate(UserBase):
 
 # Model for updating user info (request body)
 class UserUpdate(BaseModel):
+    id: int
     email: Optional[EmailStr] = None
-    full_name: Optional[str] = None
+    username: Optional[str] = None
+    first_name: Optional[str] = None # can be none
+    last_name: Optional[str] = None # can be none
     password: Optional[str] = None
 
 # Model for user login (request body)
 class UserLogin(BaseModel):
-    email: EmailStr
+    email: Optional[EmailStr] = None
+    username: Optional[str] = None
     password: str
 
 # Model for user response (API response)
 class UserResponse(BaseModel):
     id: int
     email: EmailStr
-    full_name: Optional[str] = None
-    is_active: bool = True
+    username: str
+    full_name: Optional[str]
+    is_active: bool
     created_at: datetime
 
     class Config:
