@@ -38,7 +38,7 @@ class UserResponse(BaseModel):
     full_name: Optional[str]
     is_active: bool
     created_at: datetime
-
+    token: Optional[str] = None
     class Config:
         from_attributes = True  # Allows conversion from SQLAlchemy models
 
