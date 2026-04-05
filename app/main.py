@@ -3,9 +3,6 @@ from app.api.v1.api import api_router
 from app.db.session import engine
 from app.models import Base  # Import to register models
 
-# Create tables on startup (development only; use Alembic for production)
-Base.metadata.create_all(bind=engine)
-
 tags_metadata = [
     {
         "name": "Users",
