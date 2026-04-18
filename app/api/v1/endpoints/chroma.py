@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.schemas import ChromaQueryRequest, ChromaQueryResponse, ChromaUpsertRequest, UserResponse
+from app.models import ChromaQueryRequest, ChromaQueryResponse, ChromaUpsertRequest, UserResponse
 from app.services import getCurrentUser
 from app.services.chroma_service import get_chroma_service
 

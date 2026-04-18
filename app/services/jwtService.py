@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, status
 from app.db import get_db
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from app.models import User
+from app.schemas import User
 
 oauth2Scheme = OAuth2PasswordBearer(tokenUrl="token")
 class JwtService:

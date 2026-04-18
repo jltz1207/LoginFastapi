@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from app.api.v1.api import api_router
 from app.db.session import engine
-from app.models import Base  # Import to register models
+from app.schemas import Base  # Import to register models
 
 tags_metadata = [
     {
