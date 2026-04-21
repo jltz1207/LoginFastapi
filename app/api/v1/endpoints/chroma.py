@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException
+from io import BytesIO
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from app.models import ChromaQueryRequest, ChromaQueryResponse, ChromaUpsertRequest, UserResponse
 from app.services import getCurrentUser
 from app.services.chroma_service import get_chroma_service
-
+from pypdf import PdfReader
 router = APIRouter(tags=["AI"])
 
 
@@ -12,7 +15,14 @@ async def chroma_health(currUser: UserResponse = Depends(getCurrentUser)):
     _ = currUser
     return {"status": "ok", "message": "Chroma route is available"}
 
-
+@router.post("/upload_pdf")
+async def upload_pdf(
+    doc: UploadFile,
+    currUser: UserResponse = Depends(getCurrentUser),
+):
+    try:
+      PdfReader()
+    
 @router.post("/upsert")
 async def upsert_documents(
     payload: ChromaUpsertRequest,
