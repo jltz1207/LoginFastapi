@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from app.models import ChromaQueryRequest, ChromaQueryResponse, ChromaUpsertRequest, UserResponse
 from app.services import getCurrentUser
-from app.services.chroma_service import get_chroma_service
+from app.services.chromaService import get_chroma_service
 from pypdf import PdfReader
 router = APIRouter(tags=["AI"])
 
