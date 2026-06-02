@@ -1,31 +1,43 @@
-version: '2'
+version: '3.8'
 services:
   loginapi:
     image: loginapi:v2
-    container_name: loginapi-v2
+    container_name: loginapi-server-v2
     ports:
      - "80:8000"
-    environment:
+    env_file:
      - .env.prod
     volumes:
-     - loginapi-data:/var/lib/docker/volumes/loginapi_data/_data
+     - .:/app
+     - /app/.venv/
     networks:
      - loginapi-network
+    depends_on:
+      loginapi-postgres:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
   loginapi-postgres:
     image: postgres:16-alpine
-    containe_name: loginapi-postgres-v2
+    container_name: loginapi-postgres-v2
     ports: 
      - "5432:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-    restarts: always
+    restart: always
     volumes:
-     - loginapi-data:/var/lib/docker/volumes/loginapi_data/_data
+     - loginapi-pgdata:/var/lib/postgresql/data
     networks:
      - loginapi-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s 
 volumes:
-  loginapi-data
+  loginapi-appdata:
+  loginapi-pgdata:
 networks:
-  loginapi-network
+  loginapi-network:

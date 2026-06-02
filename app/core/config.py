@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     OPENAI_API_KEY: str = ""
   
-    model_config = SettingsConfigDict(env_file=None)
+    model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
 app_env = os.getenv("APP_ENV", "dev")
 

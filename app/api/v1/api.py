@@ -6,6 +6,8 @@ from sqlalchemy import select
 from app.models import Version
 from app.schemas import VersionResponse
 from app.utils import get_ip
+import os
+
 api_router = APIRouter()
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(documents.router, prefix="/documents", tags=["Documents"])
@@ -20,6 +22,7 @@ async def healthcheck(db:Session = Depends(get_db)):
       ip = get_ip()
       ver_dict = ver_schema.model_dump()
       ver_dict["ip"] = ip
+      ver_dict["env"] = os.getenv("APP_ENV", "dev")
       return ver_dict
     else:
       raise HTTPException(status_code=404, detail="Version not found")
