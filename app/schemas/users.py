@@ -35,7 +35,6 @@ class UserResponse(BaseModel):
     id: int
     email: EmailStr
     username: str
-    full_name: Optional[str]
     is_active: bool
     created_at: datetime
     token: Optional[str] = None

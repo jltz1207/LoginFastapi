@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from app.db.session import get_db
-from app.schemas import User
-from app.models import UserCreate, UserResponse, UserUpdate, UserLogin
+from app.models import User
+from app.schemas import UserCreate, UserResponse, UserUpdate, UserLogin
 from app.services import jwtService, getCurrentUser
 import bcrypt
 
@@ -41,11 +42,16 @@ async def login(loginModel: UserLogin, db:Session = Depends(get_db)):
 @router.post("/register", response_model=UserResponse)
 async def register(user: UserCreate, db: Session = Depends(get_db)):
     # Check if user already exists
-    stmt = select(User).where(User.email == user.email)
-    existing_user = db.execute(stmt).scalars().first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    
+    try:
+        stmt = select(User).where(User.email == user.email)
+        existing_user = db.execute(stmt).scalars().first()
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Email already registered")
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
+
     # Hash the password
     hashed_pw = hash_password(user.password)
     
@@ -55,7 +61,6 @@ async def register(user: UserCreate, db: Session = Depends(get_db)):
         username = user.username,
         first_name= user.first_name,
         last_name= user.last_name,
-        full_name = user.first_name + " " + user.last_name,
         hashed_password=hashed_pw
     )
     # Save to database

@@ -1,2 +1,2 @@
 from .jwtService import jwtService, JwtService, getCurrentUser
-from .chroma_service import get_chroma_service, ChromaService
+from .vectorService import vector_service, VectorService

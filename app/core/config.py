@@ -1,4 +1,5 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
 
 class Settings(BaseSettings):
     # Database - PostgreSQL (URL-encode special chars in password: @ = %40)
@@ -12,10 +13,15 @@ class Settings(BaseSettings):
     # ChromaDB settings
     CHROMA_PERSIST_DIRECTORY: str = "./chroma_data"
     CHROMA_COLLECTION_NAME: str = "users_knowledge"
-    CHROMA_OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     OPENAI_API_KEY: str = ""
   
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
-settings = Settings()
+app_env = os.getenv("APP_ENV", "dev")
+
+if app_env == "prod":
+    settings = Settings(_env_file=".env.prod") # docker
+else:
+    settings = Settings(_env_file=".env.dev") # local
