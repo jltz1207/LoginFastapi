@@ -12,13 +12,10 @@ class Settings(BaseSettings):
 
     # ChromaDB settings
     CHROMA_PERSIST_DIRECTORY: str = "./chroma_data"
-    CHROMA_COLLECTION_NAME: str = "users_knowledge"
-
-    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
-    OPENAI_API_KEY: str = ""
-  
+    EMBEDDING_MODEL: str = "gemini-embedding-001"
+    GEMINI_API_KEY:str  =""
+    COLLECTION_NAME:str = "user_knowledge_base"
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
-
 app_env = os.getenv("APP_ENV", "dev")
 
 if app_env == "prod":

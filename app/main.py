@@ -1,3 +1,4 @@
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from app.api.v1.api import api_router
 from app.db.session import engine
@@ -19,5 +20,5 @@ tags_metadata = [
 ]
 
 app = FastAPI(openapi_tags=tags_metadata)
-
+load_dotenv
 app.include_router(api_router, prefix="/api/v1") # base url = server + prefix
