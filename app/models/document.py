@@ -45,7 +45,7 @@ class Document(Base):
     file_extension: Mapped[str] = mapped_column(String(20), nullable=False) # pdf | docx | csv | etc.
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True) 
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=True, index=True) 
 
     # --- Storage Layer Details ---
     storage_bucket: Mapped[str] = mapped_column(String(255), nullable=False)

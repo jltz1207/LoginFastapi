@@ -12,3 +12,5 @@ wheels/
 migrations/
 
 chroma_data/
+
+storages/

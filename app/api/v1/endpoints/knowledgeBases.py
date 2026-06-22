@@ -1,16 +1,23 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
+from app.core.storage.fileStorage import upload_file
+from app.core.config import settings
 from app.db.session import get_db
 from app.models import User
 from app.models.asistantKnowledgeBase import AsistantKnowledgeBase
+from app.models.document import Document, IngestionStatus
 from app.rag.loaders.base_loader import base_loader
 from app.rag.pipelines import create_pipeline
 from app.rag.splitters.recursive_splitters import get_recursive_chunks
 from app.schemas import  DocumentUploadResponse
+from app.schemas.documents import DocumentResponse
 from app.schemas.knowledgeBases import KnowledgeBaseCreateRequest, KnowledgeBaseCreateResponse, QueryAsistantRequest, QueryAsistantResponse
 from app.services import jwtService, getCurrentUser
+from app.utils.token_counter import count_tokens
 from app.vectorstore import get_vector_store_indexer
 from fastapi import UploadFile
 
@@ -64,12 +71,45 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
     document_list = base_loader.load(file_ext, file_bytes)
     if document_list is None:
       raise HTTPException(status_code=400, detail="Unsupported file type for processing.")
-
+    page_count = len(document_list)
     chunking_list = get_recursive_chunks(document_list)
+    chunk_count = len(chunking_list)
+    chunking_list_str = [doc.page_content for doc in chunking_list]
+    token_count = count_tokens(chunking_list_str, settings.EMBEDDING_PROVIDE_TYPE)
     store = get_vector_store_indexer()
-    store.add_documents(chunking_list, user_id=str(current_user.id), metadata=metadata)
+    store.add_documents(chunking_list, user_id=current_user.id, metadata=metadata)
+    
+    # handle upload process
+    result =  upload_file(current_user.id, knowledge_base_id, file_bytes, file.filename, file.content_type)
+    storage_bucket = result.get("storage_bucket")
+    storage_key = result.get("storage_key")
+    if not storage_bucket or not storage_key:
+      raise HTTPException(
+        status_code=500,
+        detail="File upload failed: storage location could not be determined",
+    )
 
-    response = DocumentUploadResponse(success=True, message="upload success")
+    # save to database
+    new_doc = Document(
+      knowledge_base_id=knowledge_base_id,
+      user_id = current_user.id,
+      filename = Path(file.filename).name,
+      file_extension = file_ext,
+      mime_type = file.content_type,
+      file_size_bytes = len(file_bytes),
+      storage_bucket = storage_bucket,
+      storage_key = storage_key,
+      status = IngestionStatus.INDEXED,
+      chunk_count = chunk_count,
+      token_count = token_count,
+      raw_text = "\n.".join(chunking_list_str),
+      page_count = page_count,
+    )
+    db.add(new_doc)
+    db.commit()
+    db.refresh(new_doc)
+    response_doc = DocumentResponse.model_validate(new_doc)
+    response = DocumentUploadResponse(success=True, message="upload success", document=response_doc)
   except SQLAlchemyError as exc:
     raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
   except Exception as exc:

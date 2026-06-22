@@ -21,11 +21,11 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"   # DEBUG | INFO | WARNING | ERROR
     LOG_FORMAT: str = "console"  # console | json
-
+    LOCAL_STORAGE_ROOT: str = "./storages"
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
 app_env = os.getenv("APP_ENV", "dev")
 
 if app_env == "prod":
-    settings = Settings(_env_file=".env.prod") # docker
+    settings = Settings(_env_file=".env.prod") # dockerg
 else:
     settings = Settings(_env_file=".env.dev") # local
