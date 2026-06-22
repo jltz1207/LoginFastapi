@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     COLLECTION_NAME:str = "user_knowledge_base"
     PARTITION_METHOD: int = 2  # 1 = GLOBAL_COLLECTION, 2 = ONE_USER_ONE_COLLECTION
     EMBEDDING_PROVIDE_TYPE:str ="GEMINI"
+
+    # Logging
+    LOG_LEVEL: str = "INFO"   # DEBUG | INFO | WARNING | ERROR
+    LOG_FORMAT: str = "console"  # console | json
+
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
 app_env = os.getenv("APP_ENV", "dev")
 

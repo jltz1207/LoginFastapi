@@ -21,4 +21,5 @@ dependencies = [
     "pypdf>=6.10.2",
     "python-jose[cryptography]>=3.5.0",
     "sqlalchemy>=2.0.48",
+    "structlog>=23.1.0",
 ]

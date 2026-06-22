@@ -1,8 +1,13 @@
+from app.core.logging import setup_logging  # must be first — configures root logger
+
+setup_logging()
+
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.security import HTTPBearer
 from app.api.v1.api import api_router
 from app.db.session import engine
+from app.middleware.request_logger import RequestLoggerMiddleware
 from app.models import Base  # Import to register models
 
 tags_metadata = [
@@ -21,6 +26,8 @@ tags_metadata = [
 ]
 
 app = FastAPI(openapi_tags=tags_metadata)
+app.add_middleware(RequestLoggerMiddleware)
+
 security_scheme = HTTPBearer()
 load_dotenv
 app.include_router(api_router, prefix="/api/v1") # base url = server + prefix
