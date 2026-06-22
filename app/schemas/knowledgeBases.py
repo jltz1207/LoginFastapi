@@ -17,8 +17,9 @@ class KnowledgeBaseCreateResponse(BaseModel):
     title:str
     status:str #enum to str
     last_message_at: Optional[datetime]
-    created_at: datetime
-    updated_at: Optional[datetime]
+    created_dt: Optional[datetime]
+    modified_dt: Optional[datetime]
+    deleted_at: Optional[datetime]
     class Config:
         from_attributes = True  # Allows conversion from SQLAlchemy models
     

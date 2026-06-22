@@ -13,7 +13,7 @@ class vector_partition_strategy(Enum):
 class Collection_manager():
     def __init__(self, client = None):
             self.client = client or get_chroma_db().client
-            self.embedding_function = self.get_embedding_function()
+            self.embedding_function = EmbeddingFactory.get_embedding_function()
             self.partition_strategy = vector_partition_strategy(settings.PARTITION_METHOD)
     
     def get_or_create_collection(self, user_id:str) -> Chroma:

@@ -1,5 +1,5 @@
 from .users import UserBase, UserCreate, UserUpdate, UserLogin, UserResponse
-from .documents import DocumentUploadRequest, DocumentUploadResponse
+from .documents import DocumentUploadResponse
 from .versions import VersionResponse
 # __all__ = [
 # 	"UserBase",
