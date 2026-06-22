@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 from datetime import datetime
@@ -17,7 +19,7 @@ class UserCreate(UserBase):
 
 # Model for updating user info (request body)
 class UserUpdate(BaseModel):
-    id: int
+    id: UUID
     email: Optional[EmailStr] = None
     username: Optional[str] = None
     first_name: Optional[str] = None # can be none
@@ -32,7 +34,7 @@ class UserLogin(BaseModel):
 
 # Model for user response (API response)
 class UserResponse(BaseModel):
-    id: int
+    id: UUID
     email: EmailStr
     username: str
     is_active: bool

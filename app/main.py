@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.security import HTTPBearer
 from app.api.v1.api import api_router
 from app.db.session import engine
 from app.models import Base  # Import to register models
@@ -20,5 +21,6 @@ tags_metadata = [
 ]
 
 app = FastAPI(openapi_tags=tags_metadata)
+security_scheme = HTTPBearer()
 load_dotenv
 app.include_router(api_router, prefix="/api/v1") # base url = server + prefix

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from app.api.v1.endpoints import users, documents, chats
+from app.api.v1.endpoints import knowledgeBases, users
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from sqlalchemy import select
@@ -10,7 +10,7 @@ import os
 
 api_router = APIRouter()
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
-api_router.include_router(documents.router, prefix="/documents", tags=["Documents"])
+api_router.include_router(knowledgeBases.router, prefix="/knowledgeBases", tags=["KnowledgeBases"])
 
 @api_router.get("/healthcheck")
 async def healthcheck(db:Session = Depends(get_db)):

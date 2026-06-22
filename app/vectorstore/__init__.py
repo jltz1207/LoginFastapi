@@ -1,2 +1,2 @@
 from .collection_manager import Collection_manager
-from .store import get_vector_store_indexer
+from .StoreIndexer import get_vector_store_indexer

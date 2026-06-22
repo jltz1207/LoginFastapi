@@ -1,18 +1,34 @@
+import enum
+import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import UUID, DateTime, Enum, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from app.db.session import Base
 
 
-class Version(Base):
-    __tablename__ = "versions"
+class StatusEnum(enum.Enum):
+    ACTIVE = 1
+    ARCHIVED = 2
+    DELETED = 3
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    version: Mapped[str] = mapped_column(String, nullable=False)
+
+class AsistantKnowledgeBase(Base):
+    __tablename__ = "AsistantKnowledgeBases"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True, nullable=False)
+    title: Mapped[Optional[str]] = mapped_column(String, default="Untitled Knowledge Base")
+    status: Mapped[StatusEnum] = mapped_column(Enum(StatusEnum), default=StatusEnum.ACTIVE, nullable=False)
+    last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_dt: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
