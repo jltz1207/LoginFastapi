@@ -11,9 +11,9 @@ from app.db.session import Base
 
 
 class RoleEnum(enum.Enum):
-    USER = 1
-    ASISTANT = 2
-    SYSTEM = 3
+    USER = "user"
+    AI = "asistant"
+    SYSTEM = "system"
 
 
 class StatusEnum(enum.Enum):
