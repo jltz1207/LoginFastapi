@@ -14,7 +14,9 @@ dependencies = [
     "langchain-community>=0.4.2",
     "langchain-google-genai>=4.2.5",
     "langchain-openai>=1.2.0",
+    "langchain-tavily>=0.2.18",
     "langchain-text-splitters>=1.1.2",
+    "langgraph>=1.2.6",
     "openai>=2.30.0",
     "psycopg2-binary>=2.9.11",
     "pydantic-settings>=2.13.1",
@@ -23,3 +25,14 @@ dependencies = [
     "sqlalchemy>=2.0.48",
     "structlog>=23.1.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

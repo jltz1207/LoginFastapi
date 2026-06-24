@@ -18,11 +18,18 @@ class Settings(BaseSettings):
     PARTITION_METHOD: int = 2  # 1 = GLOBAL_COLLECTION, 2 = ONE_USER_ONE_COLLECTION
     EMBEDDING_PROVIDE_TYPE:str ="GEMINI"
 
+    # LLM 
+    LLM_PROVIDER_TYPE: str = "GEMINI"
+    LLM_MODEL_NAME: str = "gemini-3.5-flash"
+    LLM_API_KEY: str = ""
+
     # Logging
     LOG_LEVEL: str = "INFO"   # DEBUG | INFO | WARNING | ERROR
     LOG_FORMAT: str = "console"  # console | json
     LOCAL_STORAGE_ROOT: str = "./storages"
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
+
+    TAVILY_API_KEY: str = ""
 app_env = os.getenv("APP_ENV", "dev")
 
 if app_env == "prod":
