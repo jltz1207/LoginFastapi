@@ -1,9 +1,15 @@
 import abc
+from enum import Enum
 from langgraph.graph.state import CompiledStateGraph
-
+from langgraph.checkpoint.base import BaseCheckpointSaver
 
 class BaseGraphFactory(abc.ABC):
     @staticmethod
     @abc.abstractmethod
-    def build() -> CompiledStateGraph:
+    def build(checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:
         pass
+
+class GraphStrategy(Enum):
+    ADAPTIVE = 1
+    SEARCH = 2
+    SELF = 3

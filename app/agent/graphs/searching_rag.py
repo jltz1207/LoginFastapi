@@ -2,6 +2,7 @@ from app.agent.edges.conditional import decider_from_grade
 from app.agent.graphs.base import BaseGraphFactory
 from langgraph.graph import StateGraph
 from langgraph.graph.state import END, START, CompiledStateGraph
+from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from app.agent.nodes.generator import generator_execution
 from app.agent.nodes.grader import grader_execution
@@ -12,7 +13,7 @@ from app.agent.state import AgentState
 
 class SearchingRagGraphFactory(BaseGraphFactory):
     @staticmethod
-    def build() -> CompiledStateGraph:
+    def build(checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:
         graph = StateGraph(AgentState)
         graph.add_node("retrieve_docs", retrieval_execution)
         graph.add_node("grade_docs", grader_execution)
@@ -33,4 +34,4 @@ class SearchingRagGraphFactory(BaseGraphFactory):
         graph.add_edge("rewrite_question", "web_searcher")
         graph.add_edge("web_searcher", "grade_docs") # replace the orginal source, because they are irrelevant
         graph.add_edge("generate", END)
-        return graph.compile()
+        return graph.compile(checkpointer=checkpointer)

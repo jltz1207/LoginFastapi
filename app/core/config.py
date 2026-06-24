@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
     TAVILY_API_KEY: str = ""
+    GRAPH_STRATEGY: int = 2  # Default: GraphStrategy.SEARCH
 app_env = os.getenv("APP_ENV", "dev")
 
 if app_env == "prod":
