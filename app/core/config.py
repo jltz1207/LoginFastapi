@@ -3,7 +3,7 @@ import os
 
 class Settings(BaseSettings):
     # Database - PostgreSQL (URL-encode special chars in password: @ = %40)
-    DATABASE_URL: str = "postgresql://postgres:P%40ssw0rd@localhost:5432/AsistAi"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:P%40ssw0rd@localhost:5432/AsistAi"
 
     # Optional: JWT secret, etc.
     SECRET_KEY: str = "a-string-secret-at-least-256-bits-long"

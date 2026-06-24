@@ -20,6 +20,7 @@ dependencies = [
     "langgraph-checkpoint>=4.1.1",
     "langgraph-checkpoint-postgres>=3.1.0",
     "openai>=2.30.0",
+    "asyncpg>=0.30.0",
     "psycopg2-binary>=2.9.11",
     "pydantic-settings>=2.13.1",
     "pypdf>=6.10.2",

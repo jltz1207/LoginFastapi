@@ -19,8 +19,5 @@ Base = declarative_base()
 
 # Dependency to get DB session
 async def get_db():
-    async with AsyncSessionLocal() as session: # async with is a special shortcut. It automatically awaits the connection setup when you enter the block, and it automatically awaits the cleanup when you leave it
-        try:
-            yield session
-        finally:
-            session.close()
+    async with AsyncSessionLocal() as session:
+        yield session

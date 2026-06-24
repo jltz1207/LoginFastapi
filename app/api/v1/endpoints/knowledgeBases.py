@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from app.core.storage.fileStorage import upload_file
@@ -24,12 +24,12 @@ from fastapi import UploadFile
 router = APIRouter(tags=["KnowledgeBases"])
 
 @router.post("/create", response_model=KnowledgeBaseCreateResponse)
-async def createKnowledgeBase(requestModel: KnowledgeBaseCreateRequest, db:Session = Depends(get_db), current_user: User = Depends(getCurrentUser)):
-  
+async def createKnowledgeBase(requestModel: KnowledgeBaseCreateRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(getCurrentUser)):
+
   try:
     trim_title = requestModel.title.strip()
     get_title_stmt = select(AsistantKnowledgeBase).where(AsistantKnowledgeBase.user_id == current_user.id, AsistantKnowledgeBase.title == trim_title)
-    exist_title = db.execute(get_title_stmt).scalars().all()
+    exist_title = (await db.execute(get_title_stmt)).scalars().all()
     if exist_title:
       raise HTTPException(status_code=500, detail=f"Title '{trim_title}' is used.")
     new_kb = AsistantKnowledgeBase(
@@ -37,8 +37,8 @@ async def createKnowledgeBase(requestModel: KnowledgeBaseCreateRequest, db:Sessi
       title=requestModel.title,
     )
     db.add(new_kb)
-    db.commit()
-    db.refresh(new_kb)
+    await db.commit()
+    await db.refresh(new_kb)
     kb_pydantic = KnowledgeBaseCreateResponse.model_validate(new_kb)
   except SQLAlchemyError as exc:
     raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
@@ -50,7 +50,7 @@ async def createKnowledgeBase(requestModel: KnowledgeBaseCreateRequest, db:Sessi
   return kb_pydantic
 
 @router.post("/upload", response_model=DocumentUploadResponse)
-async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = Form(...), db:Session = Depends(get_db), current_user: User = Depends(getCurrentUser)):
+async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = Form(...), db: AsyncSession = Depends(get_db), current_user: User = Depends(getCurrentUser)):
   # validation by pydantic
 
   # check bytes
@@ -106,8 +106,8 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
       page_count = page_count,
     )
     db.add(new_doc)
-    db.commit()
-    db.refresh(new_doc)
+    await db.commit()
+    await db.refresh(new_doc)
     response_doc = DocumentResponse.model_validate(new_doc)
     response = DocumentUploadResponse(success=True, message="upload success", document=response_doc)
   except SQLAlchemyError as exc:
@@ -119,7 +119,7 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
 
 
 @router.post("/query", response_model=QueryAsistantResponse)
-async def query(model:QueryAsistantRequest, db:Session = Depends(get_db), current_user: User = Depends(getCurrentUser)):
+async def query(model: QueryAsistantRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(getCurrentUser)):
 
     pipeline_runnable = create_pipeline(current_user.id)
     input_state = {
