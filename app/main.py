@@ -2,6 +2,7 @@ from app.core.logging import setup_logging  # must be first — configures root 
 
 setup_logging()
 
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.security import HTTPBearer
@@ -9,6 +10,13 @@ from app.api.v1.api import api_router
 from app.db.session import engine
 from app.middleware.request_logger import RequestLoggerMiddleware
 from app.models import Base  # Import to register models
+from app.agent.persistance.client import checkpointer_lifespan
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with checkpointer_lifespan():
+        yield
 
 tags_metadata = [
     {
@@ -25,7 +33,7 @@ tags_metadata = [
     },
 ]
 
-app = FastAPI(openapi_tags=tags_metadata)
+app = FastAPI(openapi_tags=tags_metadata, lifespan=lifespan)
 app.add_middleware(RequestLoggerMiddleware)
 
 security_scheme = HTTPBearer()

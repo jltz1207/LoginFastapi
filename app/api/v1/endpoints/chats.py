@@ -29,7 +29,7 @@ async def chat(
                                          ).order_by(AsistantMessage.created_dt)
     curr_chat_messages = await db.execute(get_chat_stmt).scalars().all()
     formatted_curr_chat_messages = [BaseMessage(role=RoleEnum(msg.role), content=msg.content) for msg in curr_chat_messages]
-    
+    formatted_curr_chat_messages = formatted_curr_chat_messages.append(BaseMessage(role="user", content=requestModel.question))
     init_state = AgentState(
         user_id=current_user.id,
         knoweledge_base_id=requestModel.knoweledge_base_id,

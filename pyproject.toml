@@ -27,6 +27,7 @@ dependencies = [
     "python-jose[cryptography]>=3.5.0",
     "sqlalchemy>=2.0.48",
     "structlog>=23.1.0",
+    "psycopg[binary]>=3.3.4",
 ]
 
 [dependency-groups]

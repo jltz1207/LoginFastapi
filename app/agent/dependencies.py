@@ -26,5 +26,3 @@ async def get_compiled_graph():
     async with get_graph_checkpointer() as checkpointer:
         compiled_graph = factory.build(checkpointer=checkpointer)
         yield compiled_graph
-        
-

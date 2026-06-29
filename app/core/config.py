@@ -3,12 +3,12 @@ import os
 
 class Settings(BaseSettings):
     # Database - PostgreSQL (URL-encode special chars in password: @ = %40)
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5432/AsistAi"
+    DATABASE_URL: str = "postgresql+psycopg://postgres:password@localhost:5432/AsistAi"
 
     # Optional: JWT secret, etc.
     SECRET_KEY: str = "a-string-secret-at-least-256-bits-long"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 120
 
     # ChromaDB settings
     CHROMA_PERSIST_DIRECTORY: str = "./chroma_data"
