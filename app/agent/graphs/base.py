@@ -6,7 +6,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 class BaseGraphFactory(abc.ABC):
     @staticmethod
     @abc.abstractmethod
-    def build(checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:
+    def build(checkpointer: BaseCheckpointSaver, **kwargs) -> CompiledStateGraph:
         pass
 
 class GraphStrategy(Enum):

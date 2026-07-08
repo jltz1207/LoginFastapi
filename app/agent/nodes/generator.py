@@ -1,19 +1,17 @@
-from app.agent.llm.factory import LLMFactory
+from langchain_core.language_models import BaseChatModel
+
 from app.agent.state import AgentState
-from app.rag.chains.qa_prompt_chain import create_qa_prompt_chain
+from app.rag.prompts import QA_PROMPT
 
 
-def generator_execution(state: AgentState):
-    llm = LLMFactory.get_model()
-    qa_prompt_chain = create_qa_prompt_chain(llm)
-    context_str= "\n".join([doc.page_content for doc in state.documents])
-    qa_state = {
-        "context": context_str,
-        "chat_messages": state.chat_messages,
-        "question": state.standalone_question or state.question
-    }
-    result = qa_prompt_chain.invoke(qa_state)
-    return {
-        "chat_messages": [result.answer],
-        "source": result.source
-    } 
+def make_generator_node(llm_with_tools: BaseChatModel):
+    def generator_execution(state: AgentState) -> dict:
+        context_str = "\n".join([doc.page_content for doc in state.documents])
+        messages = QA_PROMPT.format_messages(
+            context=context_str,
+            chat_history=state.chat_messages,
+            question=state.standalone_question or state.question,
+        )
+        response = llm_with_tools.invoke(messages)  # AIMessage; may contain tool_calls
+        return {"chat_messages": [response]}
+    return generator_execution
