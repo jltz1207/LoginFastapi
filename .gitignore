@@ -14,3 +14,7 @@ migrations/
 chroma_data/
 
 storages/
+
+.env.dev
+
+.env.prod
