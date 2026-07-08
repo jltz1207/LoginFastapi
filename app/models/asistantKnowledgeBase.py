@@ -10,7 +10,7 @@ from sqlalchemy.sql import func
 from app.db.session import Base
 
 
-class StatusEnum(enum.Enum):
+class KbStatusEnum(enum.Enum):
     ACTIVE = 1
     ARCHIVED = 2
     DELETED = 3
@@ -27,7 +27,7 @@ class AsistantKnowledgeBase(Base):
     )
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True, nullable=False)
     title: Mapped[Optional[str]] = mapped_column(String, default="Untitled Knowledge Base")
-    status: Mapped[StatusEnum] = mapped_column(Enum(StatusEnum), default=StatusEnum.ACTIVE, nullable=False)
+    status: Mapped[KbStatusEnum] = mapped_column(Enum(KbStatusEnum), default=KbStatusEnum.ACTIVE, nullable=False)
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_dt: Mapped[Optional[datetime]] = mapped_column(

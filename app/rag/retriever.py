@@ -7,10 +7,10 @@ def format_doc_to_string(docs: list[Document]):
     output_str = "\n".join(doc.page_content for doc in docs)
     return output_str
 
-def  get_collection_retriever(user_id, search_type="retriever", search_kwag={"k": 5}):
+def  get_collection_retriever(user_id, search_type="similarity", search_kwags:dict={}):
     indexer = get_vector_store_indexer()
     collection = indexer.collections.get_or_create_collection(user_id)
     return collection.as_retriever(
         search_type=search_type,
-        search_kwag=search_kwag
+        search_kwags=search_kwags
     )

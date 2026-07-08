@@ -5,8 +5,7 @@ from app.core.config import settings
 
 _saver: AsyncPostgresSaver | None = None
 
-
-def get_checkpointer() -> AsyncPostgresSaver:
+def get_checkpointer():
     if _saver is None:
         raise RuntimeError("Checkpointer not initialized — call setup_checkpointer() at startup")
     return _saver

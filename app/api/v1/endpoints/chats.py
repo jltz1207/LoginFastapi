@@ -1,13 +1,13 @@
 from fastapi import APIRouter
 from fastapi.params import Depends
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.dependencies import get_compiled_graph
 from app.agent.persistance.agent_config import get_agent_config
 from app.agent.state import AgentState
 from app.db.session import get_db
-from app.models.asistantMessage import AsistantMessage, RoleEnum, StatusEnum
+from app.models.asistantMessage import AsistantMessage, MsgStatusEnum, RoleEnum
 from app.models.user import User
 from app.schemas.chats import ChatRequestModel
 from app.services.jwtService import getCurrentUser
@@ -25,18 +25,18 @@ async def chat(
 ):
     get_chat_stmt = select(AsistantMessage).where(AsistantMessage.user_id == current_user.id,
                                          AsistantMessage.knowledge_base_id == requestModel.knowledge_base_id,
-                                         AsistantMessage.status == StatusEnum.SENT,
+                                         AsistantMessage.status == MsgStatusEnum.SENT,
                                          ).order_by(AsistantMessage.created_dt)
-    curr_chat_messages = await db.execute(get_chat_stmt).scalars().all()
-    formatted_curr_chat_messages = [BaseMessage(role=RoleEnum(msg.role), content=msg.content) for msg in curr_chat_messages]
-    formatted_curr_chat_messages = formatted_curr_chat_messages.append(BaseMessage(role="user", content=requestModel.question))
+    curr_chat_messages = (await db.execute(get_chat_stmt)).scalars().all()
+    formatted_curr_chat_messages = [BaseMessage(type=RoleEnum(msg.role), content=msg.content) for msg in curr_chat_messages]
+    formatted_curr_chat_messages.append(BaseMessage(type="user", content=requestModel.question))
     init_state = AgentState(
         user_id=current_user.id,
-        knoweledge_base_id=requestModel.knoweledge_base_id,
+        knoweledge_base_id=requestModel.knowledge_base_id,
         question=requestModel.question,
         chat_messages=formatted_curr_chat_messages
     )
-    config = get_agent_config(user_id=current_user.id, knowledge_base_id=requestModel.knoweledge_base_id)
+    config = get_agent_config(user_id=current_user.id, knowledge_base_id=requestModel.knowledge_base_id)
     final_state = await graph.ainvoke(input=init_state, config=config)
     
     # save record to db

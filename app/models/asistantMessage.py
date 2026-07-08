@@ -16,7 +16,7 @@ class RoleEnum(enum.Enum):
     SYSTEM = "system"
 
 
-class StatusEnum(enum.Enum):
+class MsgStatusEnum(enum.Enum):
     SENT = 1
     STREAMING = 2
     FAILED = 3
@@ -36,7 +36,7 @@ class AsistantMessage(Base):
     sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[RoleEnum] = mapped_column(Enum(RoleEnum), nullable=False)
     content: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[StatusEnum] = mapped_column(Enum(StatusEnum), default=StatusEnum.SENT)
+    status: Mapped[MsgStatusEnum] = mapped_column(Enum(MsgStatusEnum), default=MsgStatusEnum.SENT)
     model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     prompt_tokens: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     completion_tokens: Mapped[Optional[str]] = mapped_column(String, nullable=True)

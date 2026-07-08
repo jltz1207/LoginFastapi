@@ -1,9 +1,14 @@
+import os
+from dotenv import load_dotenv
+
+_app_env = os.getenv("APP_ENV", "dev")
+load_dotenv(f".env.{_app_env}")  # must run before LangChain imports so LANGCHAIN_* vars reach os.environ
+
 from app.core.logging import setup_logging  # must be first — configures root logger
 
 setup_logging()
 
 from contextlib import asynccontextmanager
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.security import HTTPBearer
 from app.api.v1.api import api_router
@@ -37,5 +42,4 @@ app = FastAPI(openapi_tags=tags_metadata, lifespan=lifespan)
 app.add_middleware(RequestLoggerMiddleware)
 
 security_scheme = HTTPBearer()
-load_dotenv
 app.include_router(api_router, prefix="/api/v1") # base url = server + prefix
