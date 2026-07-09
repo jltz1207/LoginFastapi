@@ -23,20 +23,13 @@ async def chat(
     current_user: User = Depends(getCurrentUser),
     graph: CompiledStateGraph = Depends(get_compiled_graph)
 ):
-    get_chat_stmt = select(AsistantMessage).where(AsistantMessage.user_id == current_user.id,
-                                         AsistantMessage.knowledge_base_id == requestModel.knowledge_base_id,
-                                         AsistantMessage.status == MsgStatusEnum.SENT,
-                                         ).order_by(AsistantMessage.created_dt)
-    curr_chat_messages = (await db.execute(get_chat_stmt)).scalars().all()
-    formatted_curr_chat_messages = [HumanMessage(content=msg.content) if msg.role == "USER"
-                                     else AIMessage(content=msg.content) if msg.role == "AI"
-                                       else SystemMessage(content=msg.content)  for msg in curr_chat_messages]
-    formatted_curr_chat_messages.append(HumanMessage(content=requestModel.question))
+
+    msg = [HumanMessage(content=requestModel.question)]
     init_state = AgentState(
         user_id=current_user.id,
         knoweledge_base_id=requestModel.knowledge_base_id,
         question=requestModel.question,
-        chat_messages=formatted_curr_chat_messages
+        chat_messages=msg # merge with the old
     )
     config = get_agent_config(user_id=current_user.id, knowledge_base_id=requestModel.knowledge_base_id)
     final_state = await graph.ainvoke(input=init_state, config=config)
