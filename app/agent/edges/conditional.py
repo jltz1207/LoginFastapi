@@ -4,7 +4,7 @@ from app.agent.state import AgentState
 
 
 def decider_from_grade(state: AgentState) -> Literal["generate", "search"]:
-    if state.grade is not None and state.grade > 5:
+    if (state.grade is not None and state.grade > 5) or state.loop_count >= 2:
         return "generate"
     else:
         return "search"

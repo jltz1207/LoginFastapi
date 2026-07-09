@@ -14,6 +14,5 @@ class AgentState(BaseModel):
     chat_messages: Annotated[list[BaseMessage], add_messages]
     standalone_question: str = ""
     documents: list[Document] = []
-    source: str = ""
     loop_count: int = 0
     grade: Optional[int] = None

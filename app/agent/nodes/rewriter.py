@@ -12,5 +12,6 @@ def rewriter_execution(state: AgentState):
     }
     standalone_question = chain.invoke(chain_state)
     return {
+        "loop_count": state.loop_count + 1,
         "standalone_question": standalone_question 
     }
