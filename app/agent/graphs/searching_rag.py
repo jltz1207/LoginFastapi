@@ -24,7 +24,7 @@ class SearchingRagGraphFactory(BaseGraphFactory):
         tools: Optional[list] = None,
     ) -> CompiledStateGraph:
         resolved_tools = tools if tools is not None else SEARCHING_RAG_TOOLS
-        llm_with_tools = LLMFactory.get_model().bind_tools(resolved_tools)
+        llm_with_tools = LLMFactory.get_model(tools=resolved_tools)
 
         graph = StateGraph(AgentState)
         graph.add_node("retrieve_docs", retrieval_execution)

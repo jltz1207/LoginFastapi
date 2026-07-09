@@ -29,6 +29,8 @@ dependencies = [
     "structlog>=23.1.0",
     "psycopg[binary]>=3.3.4",
     "langsmith>=0.7.33",
+    "langchain-deepseek>=1.1.0",
+    "langchain-ollama>=1.1.0",
 ]
 
 [dependency-groups]

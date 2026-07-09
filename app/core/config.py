@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     LLM_MODEL_NAME: str = "gemini-3.5-flash"
     LLM_API_KEY: str = ""
 
+    FALLBACK_LLM_PROVIDER_TYPE: str = "DEEPSEEK"
+    FALLBACK_LLM_MODEL_NAME: str = "deepseek-v4-flash"
+    FALLBACK_LLM_API_KEY: str = ""
+    
     # Logging
     LOG_LEVEL: str = "INFO"   # DEBUG | INFO | WARNING | ERROR
     LOG_FORMAT: str = "console"  # console | json
