@@ -1,5 +1,5 @@
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.document_loaders.parsers import PyPDFParser
+from langchain_community.document_loaders import PyMuPDFLoader, PyPDFLoader
+from langchain_community.document_loaders.parsers import PyMuPDFParser, PyPDFParser
 from langchain_core.document_loaders.blob_loaders import Blob
 import tempfile
 
@@ -10,7 +10,8 @@ def pdf_loader(path:str): # from path
 
 def pdf_parser_from_bytes(pdf_bytes: bytes):
     blob = Blob.from_data(data=pdf_bytes, mime_type="application/pdf")
-    parser = PyPDFParser()
+    # parser = PyPDFParser()
+    parser = PyMuPDFParser()
     documents = parser.parse(blob)
     return documents
 

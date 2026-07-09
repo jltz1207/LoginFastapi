@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.models import User
 from app.models.asistantKnowledgeBase import AsistantKnowledgeBase
 from app.models.document import Document, IngestionStatus
+from app.rag.cleaning.data_cleaning import clean_chunks, clean_extracted_documents
 from app.rag.loaders.base_loader import base_loader
 from app.rag.pipelines import create_pipeline
 from app.rag.splitters.recursive_splitters import get_recursive_chunks
@@ -73,6 +74,7 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
       raise HTTPException(status_code=400, detail="Unsupported file type for processing.")
     page_count = len(document_list)
     chunking_list = get_recursive_chunks(document_list)
+    chunking_list = clean_chunks(chunking_list)
     chunk_count = len(chunking_list)
     chunking_list_str = [doc.page_content for doc in chunking_list]
     token_count = count_tokens(chunking_list_str, settings.EMBEDDING_PROVIDE_TYPE)

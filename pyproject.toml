@@ -31,6 +31,7 @@ dependencies = [
     "langsmith>=0.7.33",
     "langchain-deepseek>=1.1.0",
     "langchain-ollama>=1.1.0",
+    "pymupdf>=1.28.0",
 ]
 
 [dependency-groups]
