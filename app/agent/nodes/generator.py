@@ -6,7 +6,7 @@ from app.rag.prompts import QA_PROMPT
 
 def make_generator_node(llm_with_tools: BaseChatModel):
     def generator_execution(state: AgentState) -> dict:
-        context_str = "\n".join([doc.page_content for doc in state.documents])
+        context_str = "\n".join([f"Document {doc_number}: " + doc.page_content for doc_number, doc in enumerate(state.documents, start=1)])
         messages = QA_PROMPT.format_messages(
             context=context_str,
             chat_history=state.chat_messages,
