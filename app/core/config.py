@@ -18,14 +18,18 @@ class Settings(BaseSettings):
     PARTITION_METHOD: int = 2  # 1 = GLOBAL_COLLECTION, 2 = ONE_USER_ONE_COLLECTION
     EMBEDDING_PROVIDE_TYPE:str ="GEMINI"
 
-    # LLM 
+    # LLM
     LLM_PROVIDER_TYPE: str = "GEMINI"
     LLM_MODEL_NAME: str = "gemini-3.5-flash"
     LLM_API_KEY: str = ""
+    LLM_TIMEOUT_SECONDS: float = 15.0
+    LLM_MAX_RETRIES: int = 1
 
     FALLBACK_LLM_PROVIDER_TYPE: str = "DEEPSEEK"
     FALLBACK_LLM_MODEL_NAME: str = "deepseek-v4-flash"
     FALLBACK_LLM_API_KEY: str = ""
+    FALLBACK_LLM_TIMEOUT_SECONDS: float = 60.0
+    FALLBACK_LLM_MAX_RETRIES: int = 1
     
     # Logging
     LOG_LEVEL: str = "INFO"   # DEBUG | INFO | WARNING | ERROR

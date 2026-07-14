@@ -6,7 +6,6 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
 from pydantic import BaseModel
 
-from app.agent.reducers.reducers import calc_total_int
 
 
 class AgentState(BaseModel):
