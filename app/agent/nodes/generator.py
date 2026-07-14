@@ -13,5 +13,7 @@ def make_generator_node(llm_with_tools: BaseChatModel):
             question=state.standalone_question or state.question,
         )
         response = llm_with_tools.invoke(messages)  # AIMessage; may contain tool_calls
-        return {"chat_messages": [response]}
+        metadata = getattr(response, "response_metadata", {})
+        model_used = metadata.get("model", "unknown model")
+        return {"chat_messages": [response], "model_used": model_used}
     return generator_execution

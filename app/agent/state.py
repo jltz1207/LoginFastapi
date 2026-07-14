@@ -6,6 +6,8 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
 from pydantic import BaseModel
 
+from app.agent.reducers.reducers import calc_total_int
+
 
 class AgentState(BaseModel):
     user_id: UUID
@@ -16,3 +18,4 @@ class AgentState(BaseModel):
     documents: list[Document] = []
     loop_count: int = 0
     grade: Optional[int] = None
+    model_used: str = ""
