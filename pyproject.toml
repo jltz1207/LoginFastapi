@@ -28,6 +28,7 @@ dependencies = [
     "sqlalchemy>=2.0.48",
     "structlog>=23.1.0",
     "psycopg[binary]>=3.3.4",
+    "psycopg-pool>=3.2.0",
     "langsmith>=0.7.33",
     "langchain-deepseek>=1.1.0",
     "langchain-ollama>=1.1.0",
