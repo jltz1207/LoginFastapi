@@ -9,11 +9,7 @@
       "name": "Python Debugger: FastAPI",
       "type": "debugpy",
       "request": "launch",
-      "module": "uvicorn",
-      "args": [
-        "app.main:app",
-        "--reload"
-      ],
+      "program": "${workspaceFolder}/run.py",
       "jinja": true
     }
   ]
