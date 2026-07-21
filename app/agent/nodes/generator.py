@@ -17,17 +17,18 @@ def make_generator_node(llm_with_tools: BaseChatModel):
                 chat_history=state.chat_messages,
                 question=state.standalone_question or state.question,
             )
+            response = ""
             async with asyncio.timeout(90): # 90 second
                 response = await llm_with_tools.ainvoke(messages)  # AIMessage; may contain tool_calls
             metadata = getattr(response, "response_metadata", {})
             model_used = metadata.get("model", "unknown model")
+            return {"chat_messages": [response], "model_used": model_used}
         except TimeoutError as e:
             logger.error(f"LLM Invocation failed: The entire graph execution exceeds 90 second.")
             print("The entire graph execution exceeds 90 second.")
             raise e
         except Exception as e:
             logger.error(f"LLM Invocation failed: {e}")
-        return {"chat_messages": [response], "model_used": model_used}
     return generator_execution
 
 '''

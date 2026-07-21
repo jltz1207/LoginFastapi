@@ -32,7 +32,7 @@ class SearchingRagGraphFactory(BaseGraphFactory):
         graph.add_node("web_searcher", web_searcher)
         graph.add_node("generate", make_generator_node(llm_with_tools))
         graph.add_node("rewrite_question", rewriter_execution)
-        graph.add_node("tools", ToolNode(resolved_tools))
+        graph.add_node("tools", ToolNode(resolved_tools, messages_key="chat_history"))
 
         graph.add_edge(START, "retrieve_docs")
         graph.add_edge("retrieve_docs", "grade_docs")

@@ -19,6 +19,7 @@ from app.schemas.chats import ChatRequestModel
 from app.services.jwtService import getCurrentUser
 
 from langgraph.graph.state import CompiledStateGraph
+import traceback
 
 router = APIRouter(tags=["Chats"])
 logger = get_logger(__name__)
@@ -75,7 +76,7 @@ async def chat(
         except Exception as e:
             print(f"Exception Type: {type(e).__name__}")
             print(f"Exception Details: {e}")
-            raise e
+            print(traceback.format_exc())  # Prints file paths, line numbers, and call stack
         # stream finished — persist both turns now that we have the full answer
         formatted_source_str = "\n".join(
             f"Document {doc_number}: " + doc.page_content for doc_number, doc in enumerate(documents, start=1)
