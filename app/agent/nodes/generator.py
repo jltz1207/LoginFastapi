@@ -1,20 +1,32 @@
+import asyncio
+
 from langchain_core.language_models import BaseChatModel
 
 from app.agent.state import AgentState
+from app.core.logging import get_logger
 from app.rag.prompts import QA_PROMPT
 
+logger = get_logger(__name__)
 
 def make_generator_node(llm_with_tools: BaseChatModel):
     async def generator_execution(state: AgentState) -> dict:
-        context_str = "\n".join([f"Document {doc_number}: " + doc.page_content for doc_number, doc in enumerate(state.documents, start=1)])
-        messages = QA_PROMPT.format_messages(
-            context=context_str,
-            chat_history=state.chat_messages,
-            question=state.standalone_question or state.question,
-        )
-        response = await llm_with_tools.ainvoke(messages)  # AIMessage; may contain tool_calls
-        metadata = getattr(response, "response_metadata", {})
-        model_used = metadata.get("model", "unknown model")
+        try:
+            context_str = "\n".join([f"Document {doc_number}: " + doc.page_content for doc_number, doc in enumerate(state.documents, start=1)])
+            messages = QA_PROMPT.format_messages(
+                context=context_str,
+                chat_history=state.chat_messages,
+                question=state.standalone_question or state.question,
+            )
+            async with asyncio.timeout(90): # 90 second
+                response = await llm_with_tools.ainvoke(messages)  # AIMessage; may contain tool_calls
+            metadata = getattr(response, "response_metadata", {})
+            model_used = metadata.get("model", "unknown model")
+        except TimeoutError as e:
+            logger.error(f"LLM Invocation failed: The entire graph execution exceeds 90 second.")
+            print("The entire graph execution exceeds 90 second.")
+            raise e
+        except Exception as e:
+            logger.error(f"LLM Invocation failed: {e}")
         return {"chat_messages": [response], "model_used": model_used}
     return generator_execution
 

@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from app.agent.dependencies import get_compiled_graph
 from app.agent.persistance.agent_config import get_agent_config
 from app.agent.state import AgentState
+from app.core.logging import get_logger
 from app.db.session import get_db
 from app.models.asistantMessage import AsistantMessage, RoleEnum
 from app.models.user import User
@@ -20,7 +21,7 @@ from app.services.jwtService import getCurrentUser
 from langgraph.graph.state import CompiledStateGraph
 
 router = APIRouter(tags=["Chats"])
-
+logger = get_logger(__name__)
 # node names whose start we surface to the client as a lightweight status update
 STATUS_NODES = {"retrieve_docs", "grade_docs", "rewrite_question", "web_searcher", "generate"}
 
@@ -47,31 +48,34 @@ async def chat(
         documents = []
         input_tokens = 0
         output_tokens = 0
+        try:
+            async for event in graph.astream_events(input=init_state, config=config, version="v2"):
+                kind = event["event"]
+                node_name = event.get("metadata", {}).get("langgraph_node")
 
-        async for event in graph.astream_events(input=init_state, config=config, version="v2"):
-            kind = event["event"]
-            node_name = event.get("metadata", {}).get("langgraph_node")
+                if kind == "on_chain_start" and event["name"] in STATUS_NODES:
+                    yield f"data: {json.dumps({'type': 'status', 'node': event['name']})}\n\n"
 
-            if kind == "on_chain_start" and event["name"] in STATUS_NODES:
-                yield f"data: {json.dumps({'type': 'status', 'node': event['name']})}\n\n"
+                elif kind == "on_chat_model_stream" and node_name == "generate":
+                    chunk_content = event["data"]["chunk"].text
+                    if chunk_content:
+                        full_answer += chunk_content
+                        yield f"data: {json.dumps({'type': 'token', 'content': chunk_content})}\n\n"
 
-            elif kind == "on_chat_model_stream" and node_name == "generate":
-                chunk_content = event["data"]["chunk"].content
-                if chunk_content:
-                    full_answer += chunk_content
-                    yield f"data: {json.dumps({'type': 'token', 'content': chunk_content})}\n\n"
+                elif kind == "on_chain_end" and event["name"] in ("retrieve_docs", "web_searcher"):
+                    documents = event["data"]["output"].get("documents", documents)
 
-            elif kind == "on_chain_end" and event["name"] in ("retrieve_docs", "web_searcher"):
-                documents = event["data"]["output"].get("documents", documents)
-
-            elif kind == "on_chain_end" and event["name"] == "generate":
-                output = event["data"]["output"] or {}
-                model_used = output.get("model_used", model_used)
-                ai_message = (output.get("chat_messages") or [None])[-1]
-                usage = getattr(ai_message, "usage_metadata", None) or {}
-                input_tokens = usage.get("input_tokens", input_tokens)
-                output_tokens = usage.get("output_tokens", output_tokens)
-
+                elif kind == "on_chain_end" and event["name"] == "generate":
+                    output = event["data"]["output"] or {}
+                    model_used = output.get("model_used", model_used)
+                    ai_message = (output.get("chat_messages") or [None])[-1]
+                    usage = getattr(ai_message, "usage_metadata", None) or {}
+                    input_tokens = usage.get("input_tokens", input_tokens)
+                    output_tokens = usage.get("output_tokens", output_tokens)
+        except Exception as e:
+            print(f"Exception Type: {type(e).__name__}")
+            print(f"Exception Details: {e}")
+            raise e
         # stream finished — persist both turns now that we have the full answer
         formatted_source_str = "\n".join(
             f"Document {doc_number}: " + doc.page_content for doc_number, doc in enumerate(documents, start=1)

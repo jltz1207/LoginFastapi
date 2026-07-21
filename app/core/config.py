@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     FALLBACK_LLM_API_KEY: str = ""
     FALLBACK_LLM_TIMEOUT_SECONDS: float = 60.0
     FALLBACK_LLM_MAX_RETRIES: int = 1
+
+    FALLBACK_LLM_PROVIDER_TYPE_2: str = "DEEPSEEK"
+    FALLBACK_LLM_MODEL_NAME_2: str = "deepseek-v4-flash"
+    FALLBACK_LLM_API_KEY_2: str = ""
+    FALLBACK_LLM_TIMEOUT_SECONDS_2: float = 60.0
+    FALLBACK_LLM_MAX_RETRIES_2: int = 1
     
     # Logging
     LOG_LEVEL: str = "INFO"   # DEBUG | INFO | WARNING | ERROR
