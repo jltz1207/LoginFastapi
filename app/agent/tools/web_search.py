@@ -1,9 +1,11 @@
 from langchain_core.tools import tool
-from langchain_tavily import tavily_research
+from langchain_community.tools.tavily_search import TavilySearchResults
+
+from app.agent.function.tavily_web_search import tavily_web_search
 
 
 @tool
-def tavily_web_search_tool(max_results: int, query: str)-> list:
+async def tavily_web_search_tool(max_results: int, query: str)-> list:
     """Search the web for up-to-date information using Tavily.
 
     Use this tool when you need to find current information, research a topic,
@@ -16,6 +18,5 @@ def tavily_web_search_tool(max_results: int, query: str)-> list:
     Returns:
         A list of search result objects, each containing a URL, title, and content snippet.
     """
-    tavily_search = tavily_research(max_results=max_results)
-    results = tavily_search.invoke(query)
+    results = await tavily_web_search(max_results, query)
     return results
