@@ -13,7 +13,7 @@ from app.models.document import Document, IngestionStatus
 from app.rag.cleaning.data_cleaning import clean_chunks, clean_extracted_documents
 from app.rag.loaders.base_loader import base_loader
 from app.rag.pipelines import create_pipeline
-from app.rag.splitters.recursive_splitters import get_recursive_chunks
+from app.rag.splitters.chunkerFactory import ChunkerFactory
 from app.schemas import  DocumentUploadResponse
 from app.schemas.documents import DocumentResponse
 from app.schemas.knowledgeBases import KnowledgeBaseCreateRequest, KnowledgeBaseCreateResponse, QueryAsistantRequest, QueryAsistantResponse
@@ -73,7 +73,9 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
     if document_list is None:
       raise HTTPException(status_code=400, detail="Unsupported file type for processing.")
     page_count = len(document_list)
-    chunking_list = get_recursive_chunks(document_list)
+    factory = ChunkerFactory()
+    recursive_chunk_strategy =factory.create_chunker("recursive")
+    chunking_list = recursive_chunk_strategy.chunk(document_list)
     chunking_list = clean_chunks(chunking_list)
     chunk_count = len(chunking_list)
     chunking_list_str = [doc.page_content for doc in chunking_list]
@@ -81,6 +83,7 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
     store = get_vector_store_indexer()
     store.add_documents(chunking_list, user_id=current_user.id, metadata=metadata)
     
+    factory.print_chunks_transformation(document_list, chunking_list)
     # handle upload process
     result =  upload_file(current_user.id, knowledge_base_id, file_bytes, file.filename, file.content_type)
     storage_bucket = result.get("storage_bucket")
