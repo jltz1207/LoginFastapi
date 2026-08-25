@@ -1,4 +1,4 @@
-from app.agent.llm.factory import LLMFactory
+from app.llm.factory import LLMFactory
 from app.agent.state import AgentState
 from app.rag.chains.grade_source_chain import create_grade_source_chain
 

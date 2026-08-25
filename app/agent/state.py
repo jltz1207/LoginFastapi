@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 class AgentState(BaseModel):
     user_id: UUID
-    knoweledge_base_id: UUID
+    knowledge_base_id: UUID
     question: str
     chat_messages: Annotated[list[BaseMessage], add_messages]
     standalone_question: str = ""

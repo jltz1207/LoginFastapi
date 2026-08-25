@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 
 from app.agent.dependencies import get_compiled_graph
-from app.agent.persistance.agent_config import get_agent_config
+from app.agent.runtime_config import get_agent_config
 from app.agent.state import AgentState
 from app.core.logging import get_logger
 from app.db.session import get_db
@@ -37,7 +37,7 @@ async def chat(
     clean_user_question = requestModel.question.strip()
     init_state = AgentState(
         user_id=current_user.id,
-        knoweledge_base_id=requestModel.knowledge_base_id,
+        knowledge_base_id=requestModel.knowledge_base_id,
         question=requestModel.question,
         chat_messages=[HumanMessage(content=clean_user_question)]
     )

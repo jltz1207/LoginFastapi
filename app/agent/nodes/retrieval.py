@@ -6,7 +6,7 @@ def retrieval_execution(state: AgentState) -> dict:
     search_kwags = {
         "k": 3,
         "filter": {
-            "knowledge_base_id": state.knoweledge_base_id
+            "knowledge_base_id": state.knowledge_base_id
         }
     }
     retriever = get_collection_retriever(state.user_id, search_kwags=search_kwags)

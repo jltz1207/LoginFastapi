@@ -7,7 +7,7 @@ from langgraph.prebuilt import ToolNode
 
 from app.agent.edges.conditional import decider_from_grade, decider_from_tools
 from app.agent.graphs.base import BaseGraphFactory
-from app.agent.llm.factory import LLMFactory
+from app.llm.factory import LLMFactory
 from app.agent.nodes.generator import make_generator_node
 from app.agent.nodes.grader import grader_execution
 from app.agent.nodes.retrieval import retrieval_execution

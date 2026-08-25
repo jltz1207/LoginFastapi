@@ -1,7 +1,7 @@
 from starlette.exceptions import HTTPException
 from app.agent.graphs.base import GraphStrategy
 from app.agent.graphs.searching_rag import SearchingRagGraphFactory
-from app.agent.persistance.client import get_checkpointer
+from app.agent.persistence.client import get_checkpointer
 from app.core.config import settings
 
 _STRATEGY_FACTORIES = {
