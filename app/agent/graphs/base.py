@@ -13,3 +13,4 @@ class GraphStrategy(Enum):
     ADAPTIVE = 1
     SEARCH = 2
     SELF = 3
+    ROUTED = 4

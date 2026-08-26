@@ -7,7 +7,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic.v1 import BaseModel
 
 from app.rag.chains import create_qa_prompt_chain, create_condense_question_chain
-from app.rag.retriever import get_collection_retriever, format_doc_to_string
+from app.rag.retriever.basic_retriever import get_collection_retriever, format_doc_to_string
 
 class State(BaseModel):
     chat_history: list[BaseMessage]

@@ -18,3 +18,16 @@ class AgentState(BaseModel):
     loop_count: int = 0
     grade: Optional[int] = None
     model_used: str = ""
+
+class RoutedAgentState(BaseModel):
+    query: str
+    resolved_query: str
+    conversation_history: list[ConversationTurn]
+    tenant_id: str
+    knowledge_base_id: str
+    route: str
+    confidence: float
+    filters: dict
+    documents: list
+    answer: str
+    trace: list[str]

@@ -1,5 +1,5 @@
 from app.agent.state import AgentState
-from app.rag.retriever import get_collection_retriever
+from app.rag.retriever.basic_retriever import get_collection_retriever
 
 
 def retrieval_execution(state: AgentState) -> dict:
