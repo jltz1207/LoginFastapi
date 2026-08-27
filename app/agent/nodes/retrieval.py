@@ -1,15 +1,14 @@
 from app.agent.state import AgentState
+
+from app.rag.reranker.reranker import with_rerank
 from app.rag.retriever.basic_retriever import get_collection_retriever
+from app.rag.retriever.hybrid_retriever import HybridRetriever
 
 
 def retrieval_execution(state: AgentState) -> dict:
-    search_kwags = {
-        "k": 3,
-        "filter": {
-            "knowledge_base_id": state.knowledge_base_id
-        }
-    }
-    retriever = get_collection_retriever(state.user_id, search_kwags=search_kwags)
+    
+    hybrid_retriever = HybridRetriever((0.6, 0.4)).get_retriever(str(state.user_id), str(state.knowledge_base_id), top_k=4)
+    pipeline_rerank = with_rerank(hybrid_retriever, rerank_top_k=4)
     query = state.standalone_question or state.question
-    docs = retriever.invoke(query)
+    docs = pipeline_rerank.invoke(query)
     return {"documents": docs}
