@@ -21,7 +21,7 @@ from typing import Protocol
 from app.llm.factory import LLMFactory
 from pydantic import BaseModel
 
-from routing.branches.common import Chunk, enforce_knowledge_base_id
+from app.routing.branches.common import Chunk, enforce_knowledge_base_id
 
 ROUTER_VERSION = "multi-hop-v1"
 

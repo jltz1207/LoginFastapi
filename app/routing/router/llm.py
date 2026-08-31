@@ -19,10 +19,10 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from routing.cache.prompt_cache import PromptCache
-from routing.router.base import BaseRouter
-from routing.router.embedding import ROUTE_EXAMPLES, EmbeddingRouter
-from routing.taxonomy import Route, RouteDecision, RouterContext
+from app.routing.cache.prompt_cache import PromptCache
+from app.routing.router.base import BaseRouter
+from app.routing.router.embedding import ROUTE_EXAMPLES, EmbeddingRouter
+from app.routing.taxonomy import Route, RouteDecision, RouterContext
 
 ROUTER_VERSION = "llm-v1"
 

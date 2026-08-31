@@ -10,11 +10,11 @@
 
 from __future__ import annotations
 
-from routing.router.base import BaseRouter
-from routing.router.embedding import EmbeddingRouter
-from routing.router.llm import LLMRouter
-from routing.router.rule import RuleRouter
-from routing.taxonomy import DEFAULT_ROUTE, RouteDecision, RouterContext
+from app.routing.router.base import BaseRouter
+from app.routing.router.embedding import EmbeddingRouter
+from app.routing.router.llm import LLMRouter
+from app.routing.router.rule import RuleRouter
+from app.routing.taxonomy import DEFAULT_ROUTE, RouteDecision, RouterContext
 
 ROUTER_VERSION = "fallback-chain-v1"
 

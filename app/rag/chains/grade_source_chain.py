@@ -2,7 +2,7 @@
 from enum import Enum
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.runnables import RunnableSerializable
+from langchain_core.runnables import Runnable, RunnableSerializable
 from pydantic.v1 import BaseModel, Field
 
 from app.rag.prompts.grade_source_prompt import GRADE_SOURCE_PROMPT
@@ -22,7 +22,7 @@ class GradeSource(BaseModel):
     )
 
 
-def create_grade_source_chain(llm: BaseChatModel) -> RunnableSerializable:
+def create_grade_source_chain(llm: BaseChatModel) -> Runnable[dict, GradeSource]:
     structured_llm = llm.with_structured_output(GradeSource)
     chain = GRADE_SOURCE_PROMPT | structured_llm
     return chain

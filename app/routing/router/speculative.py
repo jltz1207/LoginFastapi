@@ -22,8 +22,8 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from routing.router.base import BaseRouter
-from routing.taxonomy import CONFIDENCE_THRESHOLD, DEFAULT_ROUTE, Route, RouteDecision, RouterContext
+from app.routing.router.base import BaseRouter
+from app.routing.taxonomy import CONFIDENCE_THRESHOLD, DEFAULT_ROUTE, Route, RouteDecision, RouterContext
 
 ROUTER_VERSION = "speculative-v1"
 

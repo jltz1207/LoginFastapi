@@ -1,12 +1,12 @@
 from app.agent.graphs.routed_rag import RoutedGraphFactory
 from starlette.exceptions import HTTPException
 from app.agent.graphs.base import GraphStrategy
-from app.agent.graphs.searching_rag import SearchingRagGraphFactory
+from app.agent.graphs.lookup_rag import LookupRagGraphFactory
 from app.agent.persistence.client import get_checkpointer
 from app.core.config import settings
 
 _STRATEGY_FACTORIES = {
-    GraphStrategy.SEARCH: SearchingRagGraphFactory,
+    GraphStrategy.SEARCH: LookupRagGraphFactory,
     GraphStrategy.ROUTED: RoutedGraphFactory
 }
 

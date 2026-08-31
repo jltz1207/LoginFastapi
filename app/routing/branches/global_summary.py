@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import Protocol
 
-from routing.branches.common import Chunk, enforce_knowledge_base_id
+from app.routing.branches.common import Chunk, enforce_knowledge_base_id
 
 ROUTER_VERSION = "global-summary-v1"
 

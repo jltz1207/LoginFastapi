@@ -3,36 +3,39 @@ from typing import Optional
 from langgraph.graph import StateGraph
 from langgraph.graph.state import END, START, CompiledStateGraph
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.prebuilt import ToolNode
 
 from app.agent.edges.conditional import decider_from_grade, decider_from_tools
 from app.agent.graphs.base import BaseGraphFactory
+from app.agent.state import LookupAgentState
 from app.llm.factory import LLMFactory
+from app.agent.nodes.finalizer import make_finalize_node
 from app.agent.nodes.generator import make_generator_node
 from app.agent.nodes.grader import grader_execution
 from app.agent.nodes.retrieval import retrieval_execution
 from app.agent.nodes.rewriter import rewriter_execution
 from app.agent.nodes.searcher import web_searcher
-from app.agent.state import AgentState
-from app.agent.tools import SEARCHING_RAG_TOOLS
+from app.agent.nodes.tool_node import make_bounded_tool_node
+from app.agent.tools import Lookup_RAG_TOOLS
 
 
-class SearchingRagGraphFactory(BaseGraphFactory):
+class LookupRagGraphFactory(BaseGraphFactory):
     @staticmethod
     def build(
         checkpointer: BaseCheckpointSaver,
         tools: Optional[list] = None,
     ) -> CompiledStateGraph:
-        resolved_tools = tools if tools is not None else SEARCHING_RAG_TOOLS
+        resolved_tools = tools if tools is not None else Lookup_RAG_TOOLS
         llm_with_tools = LLMFactory.get_model(tools=resolved_tools)
 
-        graph = StateGraph(AgentState)
+        graph = StateGraph(LookupAgentState)
         graph.add_node("retrieve_docs", retrieval_execution)
         graph.add_node("grade_docs", grader_execution)
         graph.add_node("web_searcher", web_searcher)
         graph.add_node("generate", make_generator_node(llm_with_tools))
         graph.add_node("rewrite_question", rewriter_execution)
-        graph.add_node("tools", ToolNode(resolved_tools, messages_key="chat_messages"))
+        graph.add_node("tools", make_bounded_tool_node(resolved_tools))
+        # No tools bound: this node has to terminate, never loop back into `tools`.
+        graph.add_node("finalize", make_finalize_node(LLMFactory.get_model()))
 
         graph.add_edge(START, "retrieve_docs")
         graph.add_edge("retrieve_docs", "grade_docs")
@@ -46,8 +49,9 @@ class SearchingRagGraphFactory(BaseGraphFactory):
         graph.add_conditional_edges(
             "generate",
             decider_from_tools,
-            {"tools": "tools", "continue": END},
+            {"tools": "tools", "finalize": "finalize", "continue": END},
         )
         graph.add_edge("tools", "generate")  # loop back after tool execution
+        graph.add_edge("finalize", END)      # budget spent: answer pending tool_calls, stop
 
         return graph.compile(checkpointer=checkpointer)

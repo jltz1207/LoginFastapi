@@ -13,8 +13,8 @@ from __future__ import annotations
 import math
 from typing import Protocol
 
-from routing.router.base import BaseRouter
-from routing.taxonomy import DEFAULT_ROUTE, CONFIDENCE_THRESHOLD, Route, RouteDecision, RouterContext
+from app.routing.router.base import BaseRouter
+from app.routing.taxonomy import DEFAULT_ROUTE, CONFIDENCE_THRESHOLD, Route, RouteDecision, RouterContext
 
 ROUTER_VERSION = "embedding-v1"
 

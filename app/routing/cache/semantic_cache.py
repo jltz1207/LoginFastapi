@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import time
 
-from routing.router.embedding import EmbeddingsClient, GeminiEmbeddingsClient, cosine_similarity
-from routing.taxonomy import RouteDecision, RouterContext
+from app.routing.router.embedding import EmbeddingsClient, GeminiEmbeddingsClient, cosine_similarity
+from app.routing.taxonomy import RouteDecision, RouterContext
 
 SEMANTIC_CACHE_THRESHOLD = 0.92
 """示範值，尚未用真實查詢分佈校準，上線前必須重新校準，不可沿用 embedding router 的 0.70。"""

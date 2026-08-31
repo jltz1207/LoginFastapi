@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from routing.taxonomy import DEFAULT_ROUTE, RouteDecision, RouterContext
+from app.routing.taxonomy import DEFAULT_ROUTE, RouteDecision, RouterContext
 
 
 class BaseRouter(ABC):

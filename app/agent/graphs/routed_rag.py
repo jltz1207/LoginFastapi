@@ -22,8 +22,9 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.graph import END, START, StateGraph
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
+from app.agent.graphs.lookup_rag import LookupRagGraphFactory
 from app.routing.branches.global_summary import global_summary_node
-from app.routing.branches.lookup import standard_rag_node
+
 from app.routing.branches.meta import meta_node
 from app.routing.branches.metadata import metadata_query_node
 from app.routing.branches.multi_hop import agentic_subgraph
@@ -162,7 +163,8 @@ class RoutedGraphFactory(BaseGraphFactory):
         g = StateGraph(RAGState)
         g.add_node("resolve", ResolverNode(resolver=resolver))
         g.add_node("route", RouterNode(router=router, fallback=fallback))
-        g.add_node("lookup", lookup or standard_rag_node)
+        search_graph = LookupRagGraphFactory.build(checkpointer=checkpointer)
+        g.add_node("lookup", lookup or search_graph)
         g.add_node("global", global_summary or global_summary_node)
         g.add_node("metadata", metadata or metadata_query_node)
         g.add_node("multi_hop", multi_hop or agentic_subgraph)

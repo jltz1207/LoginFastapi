@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import re
 
-from routing.router.base import BaseRouter
-from routing.taxonomy import DEFAULT_ROUTE, Route, RouteDecision, RouterContext
+from app.routing.router.base import BaseRouter
+from app.routing.taxonomy import DEFAULT_ROUTE, Route, RouteDecision, RouterContext
 
 ROUTER_VERSION = "rule-v1"
 

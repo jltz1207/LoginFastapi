@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.db.session import AsyncSessionLocal
 from app.llm.factory import LLMFactory
-from routing.branches.common import enforce_knowledge_base_id
+from app.routing.branches.common import enforce_knowledge_base_id
 
 ROUTER_VERSION = "metadata-v1"
 
