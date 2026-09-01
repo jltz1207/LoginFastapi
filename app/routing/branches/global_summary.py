@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Protocol
 
+from app.llm.factory import LLMFactory
 from app.routing.branches.common import Chunk, enforce_knowledge_base_id
 
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
@@ -31,22 +32,9 @@ class MapReduceLLM(Protocol):
     async def complete(self, prompt: str) -> str: ...
 
 
-class ChromaSummaryIndexClient:
-    """預設實作：Celery ingestion 把每份文件摘要寫進 Chroma 的獨立 summary collection。"""
 
-    def __init__(self, collection=None):
-        self._collection = collection
-
-    def _get_collection(self, knowledge_base_id: str):
-        if self._collection is None:
-            import chromadb
-
-            client = chromadb.Client()
-            self._collection = client.get_or_create_collection(f"kb_{knowledge_base_id}_summaries")
-        return self._collection
-
-    async def fetch_document_summaries(self, knowledge_base_id: str) -> list[Chunk]:
-        collection = self._get_collection(knowledge_base_id)
+async def fetch_document_summaries( knowledge_base_id: str) -> list[Chunk]:
+        collection = 
         results = collection.get(where={"knowledge_base_id": knowledge_base_id})
         ids = results.get("ids", [])
         documents = results.get("documents", [])
@@ -57,16 +45,7 @@ class ChromaSummaryIndexClient:
         ]
 
 
-class GeminiMapReduceLLM:
-    def __init__(self, model=None):
-        self._model = model
 
-    def _get_model(self):
-        if self._model is None:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-
-            self._model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
-        return self._model
 
     async def complete(self, prompt: str) -> str:
         response = await self._get_model().ainvoke(prompt)
@@ -83,7 +62,7 @@ def _build_map_prompt(query: str, texts: list[str]) -> str:
 
 
 class GlobalSummaryBranch:
-    """`global_summary_node` 的實作（修正原本 `lobal_summary_node` 的命名 typo）。"""
+    """`global_summary_node` 的實作（修正原本 `global_summary_node` 是正確的命名。"""
 
     router_version = ROUTER_VERSION
 
@@ -93,8 +72,7 @@ class GlobalSummaryBranch:
         llm: MapReduceLLM | None = None,
         batch_size: int = 8,
     ):
-        self._index_client = index_client or ChromaSummaryIndexClient()
-        self._llm = llm or GeminiMapReduceLLM()
+        self._llm = llm or LLMFactory.get_model()
         self._batch_size = batch_size
 
     async def __call__(self, state: RoutedAgentState) -> dict:
