@@ -57,8 +57,13 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
   # check bytes
   # check extension, inside [pdf,docx]
   try:
+    # Chroma metadata values must be str/int/float/bool — a UUID object is rejected,
+    # and a UUID that slips into a `where` filter matches nothing without raising.
+    # See docs/id-type-convention.md.
     metadata = {
-      "knowledge_base_id": knowledge_base_id
+      "knowledge_base_id": str(knowledge_base_id),
+      "user_id": str(current_user.id),
+      "tenant_id": str(current_user.tenant_id),
     }
     allowed_extension = ["pdf", "md", "docx"]
     file_ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
@@ -81,7 +86,12 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
     chunking_list_str = [doc.page_content for doc in chunking_list]
     token_count = count_tokens(chunking_list_str, settings.EMBEDDING_PROVIDE_TYPE)
     store = get_vector_store_indexer()
-    store.add_documents(chunking_list, user_id=current_user.id, metadata=metadata)
+    store.add_documents(
+      chunking_list,
+      tenant_id=str(current_user.tenant_id),
+      user_id=str(current_user.id),
+      metadata=metadata,
+    )
     
     factory.print_chunks_transformation(document_list, chunking_list)
     # handle upload process
@@ -126,7 +136,11 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
 @router.post("/query", response_model=QueryAsistantResponse)
 async def query(model: QueryAsistantRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(getCurrentUser)):
 
-    pipeline_runnable = create_pipeline(current_user.id)
+    pipeline_runnable = create_pipeline(
+        tenant_id=str(current_user.tenant_id),
+        user_id=str(current_user.id),
+        knowledge_base_id=str(model.knoweldge_base_id),
+    )
     input_state = {
         "question": model.question,
         "chat_history": []

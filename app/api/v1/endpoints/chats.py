@@ -39,9 +39,7 @@ async def chat(
     clean_user_question = requestModel.question.strip()
     init_state = LookupAgentState(
         user_id=str(current_user.id),
-        # no separate tenant model yet; tenant_id only feeds the routing layer's
-        # semantic-cache key and trace, so per-user isolation is the right mapping
-        tenant_id=str(current_user.id),
+        tenant_id=str(current_user.tenant_id),
         knowledge_base_id=str(requestModel.knowledge_base_id),
         query=clean_user_question,
         chat_history=[HumanMessage(content=clean_user_question)]

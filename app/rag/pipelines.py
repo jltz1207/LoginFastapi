@@ -16,14 +16,14 @@ class State(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-def create_pipeline(user_id) -> RunnableSerializable:
+def create_pipeline(tenant_id: str, user_id: str, knowledge_base_id: str) -> RunnableSerializable:
     llm = ChatGoogleGenerativeAI(
         model="gemini-3.5-flash",
         temperature=0.3
     )
     condense_question_chain = create_condense_question_chain(llm)
     qa_prompt_chain = create_qa_prompt_chain(llm)
-    retriever = get_collection_retriever(user_id)
+    retriever = get_collection_retriever(tenant_id, user_id, knowledge_base_id)
     chain = RunnablePassthrough.assign(
         condensed_question = condense_question_chain # output str, condensed_question
     ).assign(
