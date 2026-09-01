@@ -4,7 +4,7 @@ fallback chain）、M4（六個 leaf branch）接成一張完整的圖。
 修正了先前 stub 版本的已知技術債（見 `progress.md` 現況盤點）：
 - 移除已刪除的 `OUT_OF_SCOPE`/`refuse`，改成完整的 6 類對照表（含 `META`/`NO_RETRIEVAL`）。
 - `resolve_query`/`route_query` 從 `pass` stub 改成真正接上 M1/M2/M3 的實作。
-- `RoutedAgentState["trace"]` 由 `initial_state()` 統一給預設值 `[]`，不會是 undefined。
+- `RoutedAgentState.trace` 由欄位預設值統一給 `[]`，不會是 undefined。
 - `checkpointer` 不再是未定義的裸名字：`AsyncSqliteSaver` 是 async context manager，
   不能在模組載入時就同步建好，所以改成 `graph_app()` 這個 async context manager；
   測試/一次性呼叫可以用 `compile_app()`（不落地存檔）。
@@ -15,7 +15,6 @@ fallback chain）、M4（六個 leaf branch）接成一張完整的圖。
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import TypedDict
 
 from app.agent.graphs.base import BaseGraphFactory
 from langgraph.graph.state import CompiledStateGraph
@@ -40,22 +39,22 @@ def initial_state(
     query: str,
     knowledge_base_id: str,
     tenant_id: str,
+    user_id: str,
     conversation_history: list[ConversationTurn] | None = None,
 ) -> RoutedAgentState:
-    """建構一個乾淨的初始 state。`trace` 一律從 `[]` 開始。"""
-    return {
-        "query": query,
-        "resolved_query": "",
-        "conversation_history": conversation_history or [],
-        "tenant_id": tenant_id,
-        "knowledge_base_id": knowledge_base_id,
-        "route": "",
-        "confidence": 0.0,
-        "filters": {},
-        "documents": [],
-        "answer": "",
-        "trace": [],
-    }
+    """建構一個乾淨的初始 state。
+
+    其餘欄位（`resolved_query`/`route`/`confidence`/`filters`/`documents`/
+    `answer`/`trace`）都由 `RoutedAgentState` 的欄位預設值提供，`trace` 一樣
+    保證從 `[]` 開始，不會是 undefined。
+    """
+    return RoutedAgentState(
+        query=query,
+        knowledge_base_id=knowledge_base_id,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        conversation_history=conversation_history or [],
+    )
 
 
 class ResolverNode:
@@ -65,10 +64,10 @@ class ResolverNode:
         self._resolver = resolver or QueryResolver()
 
     async def __call__(self, state: RoutedAgentState) -> dict:
-        resolved = await self._resolver.resolve(state["query"], state.get("conversation_history"))
+        resolved = await self._resolver.resolve(state.query, state.conversation_history)
         return {
             "resolved_query": resolved,
-            "trace": state.get("trace", []) + ["resolve: query resolved to standalone question"],
+            "trace": state.trace + ["resolve: query resolved to standalone question"],
         }
 
 
@@ -88,17 +87,17 @@ class RouterNode:
 
     async def __call__(self, state: RoutedAgentState) -> dict:
         ctx = RouterContext(
-            tenant_id=state["tenant_id"],
-            knowledge_base_id=state["knowledge_base_id"],
-            resolved_history=[turn.content for turn in state.get("conversation_history", [])],
+            tenant_id=state.tenant_id,
+            knowledge_base_id=state.knowledge_base_id,
+            resolved_history=[turn.content for turn in state.conversation_history],
         )
-        trace = list(state.get("trace", []))
+        trace = list(state.trace)
 
         try:
-            decision = await self._router.route(state["resolved_query"], ctx)
+            decision = await self._router.route(state.resolved_query, ctx)
         except Exception as exc:  # noqa: BLE001 - 呼叫失敗要降級，不能讓整個 graph 掛掉
             trace.append(f"route: router failed ({type(exc).__name__}: {exc}), degrading to fallback_chain")
-            decision = await self._fallback.route(state["resolved_query"], ctx)
+            decision = await self._fallback.route(state.resolved_query, ctx)
             trace.extend(
                 f"fallback_chain: {entry}" for entry in getattr(self._fallback, "last_degradations", [])
             )
@@ -124,9 +123,9 @@ _ROUTE_TO_NODE: dict[str, str] = {
 
 def select_branch(state: RoutedAgentState) -> str:
     """confidence < 門檻一律保底走 LOOKUP，不管 router 實際輸出什麼 route。"""
-    if state["confidence"] < CONFIDENCE_THRESHOLD:
+    if state.confidence < CONFIDENCE_THRESHOLD:
         return _ROUTE_TO_NODE[DEFAULT_ROUTE.value]
-    return _ROUTE_TO_NODE[state["route"]]
+    return _ROUTE_TO_NODE[state.route]
 
 class RoutedGraphFactory(BaseGraphFactory):
     @staticmethod

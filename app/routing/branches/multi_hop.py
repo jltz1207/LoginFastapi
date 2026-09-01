@@ -9,19 +9,22 @@
 4. `global_timeout_seconds`：整個 hop 迴圈的全域逾時，用 `asyncio.wait_for` 包住。
 
 租戶隔離：`knowledge_base_id` 一律用 `common.enforce_knowledge_base_id()` 從
-state 強制取出，每一跳檢索都帶著它，不信任 router 輸出的 `state["filters"]`。
+state 強制取出，每一跳檢索都帶著它，不信任 router 輸出的 `state.filters`。
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from app.llm.factory import LLMFactory
 from pydantic import BaseModel
 
 from app.routing.branches.common import Chunk, enforce_knowledge_base_id
+
+if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
+    from app.agent.state import RoutedAgentState
 
 ROUTER_VERSION = "multi-hop-v1"
 
@@ -147,9 +150,9 @@ class MultiHopBranch:
         self._max_cost_units = max_cost_units
         self._global_timeout_seconds = global_timeout_seconds
 
-    async def __call__(self, state: dict) -> dict:
+    async def __call__(self, state: RoutedAgentState) -> dict:
         knowledge_base_id = enforce_knowledge_base_id(state)
-        query = state["resolved_query"]
+        query = state.resolved_query
 
         try:
             hops, guardrail_hits = await asyncio.wait_for(
@@ -167,7 +170,7 @@ class MultiHopBranch:
         return {
             "answer": answer,
             "documents": [chunk for hop in hops for chunk in hop.chunks],
-            "trace": state.get("trace", [])
+            "trace": state.trace
             + [f"multi_hop: hops={len(hops)} kb={knowledge_base_id} guardrails={guardrail_hits}"],
         }
 

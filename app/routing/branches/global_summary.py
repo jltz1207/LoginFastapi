@@ -5,15 +5,18 @@
 成本上都不划算。
 
 租戶隔離：`knowledge_base_id` 一律用 `common.enforce_knowledge_base_id()` 從
-state 強制取出，不信任 router 輸出的 `state["filters"]`。
+state 強制取出，不信任 router 輸出的 `state.filters`。
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from app.routing.branches.common import Chunk, enforce_knowledge_base_id
+
+if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
+    from app.agent.state import RoutedAgentState
 
 ROUTER_VERSION = "global-summary-v1"
 
@@ -94,24 +97,23 @@ class GlobalSummaryBranch:
         self._llm = llm or GeminiMapReduceLLM()
         self._batch_size = batch_size
 
-    async def __call__(self, state: dict) -> dict:
+    async def __call__(self, state: RoutedAgentState) -> dict:
         knowledge_base_id = enforce_knowledge_base_id(state)
-        query = state["resolved_query"]
+        query = state.resolved_query
 
         summaries = await self._index_client.fetch_document_summaries(knowledge_base_id)
         if not summaries:
             return {
                 "answer": _NO_SUMMARIES_MESSAGE,
                 "documents": [],
-                "trace": state.get("trace", []) + [f"global: no summaries kb={knowledge_base_id}"],
+                "trace": state.trace + [f"global: no summaries kb={knowledge_base_id}"],
             }
 
         answer = await self._map_reduce(query, [s.content for s in summaries])
         return {
             "answer": answer,
             "documents": summaries,
-            "trace": state.get("trace", [])
-            + [f"global: docs={len(summaries)} kb={knowledge_base_id}"],
+            "trace": state.trace + [f"global: docs={len(summaries)} kb={knowledge_base_id}"],
         }
 
     async def _map_reduce(self, query: str, texts: list[str]) -> str:

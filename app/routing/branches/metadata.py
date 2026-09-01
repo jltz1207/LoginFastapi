@@ -14,13 +14,16 @@ state 強制取出；即使 extractor 因為被誘導（prompt injection 等）�
 from __future__ import annotations
 
 from enum import Enum
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, Field
 
 from app.db.session import AsyncSessionLocal
 from app.llm.factory import LLMFactory
 from app.routing.branches.common import enforce_knowledge_base_id
+
+if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
+    from app.agent.state import RoutedAgentState
 
 ROUTER_VERSION = "metadata-v1"
 
@@ -116,9 +119,9 @@ class MetadataBranch:
         self._extractor = extractor or LLMMetadataQueryExtractor()
         self._default_limit = default_limit
 
-    async def __call__(self, state: dict) -> dict:
+    async def __call__(self, state: RoutedAgentState) -> dict:
         knowledge_base_id = enforce_knowledge_base_id(state)
-        query = state["resolved_query"]
+        query = state.resolved_query
 
         request = await self._extractor.extract(query)
         sql = _WHITELISTED_QUERIES[request.query_type]
@@ -139,7 +142,7 @@ class MetadataBranch:
         return {
             "answer": answer,
             "documents": rows,
-            "trace": state.get("trace", [])
+            "trace": state.trace
             + [f"metadata: type={request.query_type.value} kb={knowledge_base_id} rows={len(rows)}"],
         }
 

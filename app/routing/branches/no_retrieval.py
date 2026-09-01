@@ -9,9 +9,12 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from app.llm.factory import LLMFactory
+
+if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
+    from app.agent.state import RoutedAgentState
 
 ROUTER_VERSION = "no-retrieval-v1"
 
@@ -43,13 +46,13 @@ class NoRetrievalBranch:
     def __init__(self, llm: DirectAnswerLLM | None = None):
         self._llm = llm or LLMDirectAnswerLLM()
 
-    async def __call__(self, state: dict) -> dict:
-        query = state["resolved_query"]
+    async def __call__(self, state: RoutedAgentState) -> dict:
+        query = state.resolved_query
         answer = await self._llm.complete(query)
         return {
             "answer": answer,
             "documents": [],
-            "trace": state.get("trace", []) + ["no_retrieval: zero-retrieval direct answer"],
+            "trace": state.trace + ["no_retrieval: zero-retrieval direct answer"],
         }
 
 

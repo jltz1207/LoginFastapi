@@ -7,6 +7,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
+    from app.agent.state import RoutedAgentState
+
 ROUTER_VERSION = "meta-v1"
 
 _FIXED_REPLIES = {
@@ -36,12 +41,12 @@ def _matches(query: str, query_lower: str, keywords: list[str]) -> bool:
 class MetaBranch:
     router_version = ROUTER_VERSION
 
-    async def __call__(self, state: dict) -> dict:
-        query = state.get("resolved_query", "")
+    async def __call__(self, state: RoutedAgentState) -> dict:
+        query = state.resolved_query
         query_lower = query.lower()
 
         if _matches(query, query_lower, _TRACE_KEYWORDS):
-            answer = _format_trace(state.get("trace", []))
+            answer = _format_trace(state.trace)
         elif _matches(query, query_lower, _IDENTITY_KEYWORDS):
             answer = _FIXED_REPLIES["identity"]
         elif _matches(query, query_lower, _CAPABILITY_KEYWORDS):
@@ -52,7 +57,7 @@ class MetaBranch:
         return {
             "answer": answer,
             "documents": [],
-            "trace": state.get("trace", []) + ["meta: fixed-template reply, no generation"],
+            "trace": state.trace + ["meta: fixed-template reply, no generation"],
         }
 
 

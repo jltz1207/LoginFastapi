@@ -20,14 +20,19 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from app.routing.router.base import BaseRouter
 from app.routing.taxonomy import CONFIDENCE_THRESHOLD, DEFAULT_ROUTE, Route, RouteDecision, RouterContext
 
+if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
+    from app.agent.state import RoutedAgentState
+
 ROUTER_VERSION = "speculative-v1"
 
-Dispatch = Callable[[str, dict], Awaitable[dict]]
+# `state` is forwarded untouched to a leaf branch, so it carries whatever the
+# graph state is — now a RoutedAgentState model rather than a plain dict.
+Dispatch = Callable[[str, "RoutedAgentState"], Awaitable[dict]]
 
 
 @dataclass
@@ -73,7 +78,7 @@ class SpeculativeExecutor:
         self._threshold = threshold
         self._clock = clock
 
-    async def run(self, query: str, ctx: RouterContext, state: dict) -> SpeculativeResult:
+    async def run(self, query: str, ctx: RouterContext, state: RoutedAgentState) -> SpeculativeResult:
         start = self._clock()
 
         router_task = asyncio.create_task(self._timed(self._router.route(query, ctx)))

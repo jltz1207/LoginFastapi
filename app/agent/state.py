@@ -1,4 +1,4 @@
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 from uuid import UUID
 
 from langchain_core.documents import Document
@@ -6,6 +6,7 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
 from pydantic import BaseModel
 from app.core.config import settings
+from app.routing.resolver import ConversationTurn
 
 class BaseAgentState(BaseModel):
     user_id: str
@@ -33,7 +34,24 @@ class LookupAgentState(BaseAgentState): # lookup subgraph
     grade: Optional[int] = None
 
 class RoutedAgentState(BaseAgentState):
-    route: str
-    confidence: float
-    filters: dict
-    trace: list[str]
+    # Widened from the inherited `list[Document]`. The leaf branches write
+    # heterogeneous payloads: GLOBAL and MULTI_HOP emit
+    # `routing.branches.common.Chunk`, METADATA emits raw SQL rows (dicts).
+    # A TypedDict state never validated this; a Pydantic one does, so the field
+    # is widened here instead of forcing every branch through langchain Document.
+    documents: list[Any] = []
+
+    # Consumed by ResolverNode/RouterNode. Kept separate from the inherited
+    # `chat_history` (langchain BaseMessage + add_messages reducer) because the
+    # routing layer works in plain role/content turns and must never see
+    # retrieved document content — see RouterContext.resolved_history.
+    conversation_history: list[ConversationTurn] = []
+
+    # All defaulted so a caller can build a state from just the query fields;
+    # `route`/`confidence` stay empty until RouterNode writes them, and
+    # `confidence=0.0` falls below CONFIDENCE_THRESHOLD so select_branch's
+    # LOOKUP fallback covers the unrouted case.
+    route: str = ""
+    confidence: float = 0.0
+    filters: dict = {}
+    trace: list[str] = []
