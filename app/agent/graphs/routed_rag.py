@@ -4,7 +4,7 @@ fallback chain）、M4（六個 leaf branch）接成一張完整的圖。
 修正了先前 stub 版本的已知技術債（見 `progress.md` 現況盤點）：
 - 移除已刪除的 `OUT_OF_SCOPE`/`refuse`，改成完整的 6 類對照表（含 `META`/`NO_RETRIEVAL`）。
 - `resolve_query`/`route_query` 從 `pass` stub 改成真正接上 M1/M2/M3 的實作。
-- `RAGState["trace"]` 由 `initial_state()` 統一給預設值 `[]`，不會是 undefined。
+- `RoutedAgentState["trace"]` 由 `initial_state()` 統一給預設值 `[]`，不會是 undefined。
 - `checkpointer` 不再是未定義的裸名字：`AsyncSqliteSaver` 是 async context manager，
   不能在模組載入時就同步建好，所以改成 `graph_app()` 這個 async context manager；
   測試/一次性呼叫可以用 `compile_app()`（不落地存檔）。
@@ -23,6 +23,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from app.agent.graphs.lookup_rag import LookupRagGraphFactory
+from app.agent.state import RoutedAgentState
 from app.routing.branches.global_summary import global_summary_node
 
 from app.routing.branches.meta import meta_node
@@ -35,27 +36,12 @@ from app.routing.router.cascade import CascadeRouter
 from app.routing.router.fallback_chain import FallbackChainRouter
 from app.routing.taxonomy import CONFIDENCE_THRESHOLD, DEFAULT_ROUTE, Route, RouterContext
 
-
-class RAGState(TypedDict):
-    query: str
-    resolved_query: str
-    conversation_history: list[ConversationTurn]
-    tenant_id: str
-    knowledge_base_id: str
-    route: str
-    confidence: float
-    filters: dict
-    documents: list
-    answer: str
-    trace: list[str]
-
-
 def initial_state(
     query: str,
     knowledge_base_id: str,
     tenant_id: str,
     conversation_history: list[ConversationTurn] | None = None,
-) -> RAGState:
+) -> RoutedAgentState:
     """建構一個乾淨的初始 state。`trace` 一律從 `[]` 開始。"""
     return {
         "query": query,
@@ -78,7 +64,7 @@ class ResolverNode:
     def __init__(self, resolver: QueryResolver | None = None):
         self._resolver = resolver or QueryResolver()
 
-    async def __call__(self, state: RAGState) -> dict:
+    async def __call__(self, state: RoutedAgentState) -> dict:
         resolved = await self._resolver.resolve(state["query"], state.get("conversation_history"))
         return {
             "resolved_query": resolved,
@@ -100,7 +86,7 @@ class RouterNode:
         self._router = router or CascadeRouter()
         self._fallback = fallback or FallbackChainRouter()
 
-    async def __call__(self, state: RAGState) -> dict:
+    async def __call__(self, state: RoutedAgentState) -> dict:
         ctx = RouterContext(
             tenant_id=state["tenant_id"],
             knowledge_base_id=state["knowledge_base_id"],
@@ -136,7 +122,7 @@ _ROUTE_TO_NODE: dict[str, str] = {
 }
 
 
-def select_branch(state: RAGState) -> str:
+def select_branch(state: RoutedAgentState) -> str:
     """confidence < 門檻一律保底走 LOOKUP，不管 router 實際輸出什麼 route。"""
     if state["confidence"] < CONFIDENCE_THRESHOLD:
         return _ROUTE_TO_NODE[DEFAULT_ROUTE.value]
@@ -160,10 +146,10 @@ class RoutedGraphFactory(BaseGraphFactory):
         """組好但還沒 compile 的 graph。每個節點都可覆寫，方便測試注入假物件，
         不需要真的打 Gemini/Chroma/PostgreSQL。留空一律用 M1~M4 的預設實作。
         """
-        g = StateGraph(RAGState)
+        g = StateGraph(RoutedAgentState)
         g.add_node("resolve", ResolverNode(resolver=resolver))
         g.add_node("route", RouterNode(router=router, fallback=fallback))
-        search_graph = LookupRagGraphFactory.build(checkpointer=checkpointer)
+        search_graph = LookupRagGraphFactory.build(checkpointer=checkpointer, tools=None)
         g.add_node("lookup", lookup or search_graph)
         g.add_node("global", global_summary or global_summary_node)
         g.add_node("metadata", metadata or metadata_query_node)

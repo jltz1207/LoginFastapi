@@ -26,7 +26,7 @@ class LookupRagGraphFactory(BaseGraphFactory):
     ) -> CompiledStateGraph:
         resolved_tools = tools if tools is not None else Lookup_RAG_TOOLS
         llm_with_tools = LLMFactory.get_model(tools=resolved_tools)
-
+        llm = LLMFactory.get_model()
         graph = StateGraph(LookupAgentState)
         graph.add_node("retrieve_docs", retrieval_execution)
         graph.add_node("grade_docs", grader_execution)
@@ -35,7 +35,7 @@ class LookupRagGraphFactory(BaseGraphFactory):
         graph.add_node("rewrite_question", rewriter_execution)
         graph.add_node("tools", make_bounded_tool_node(resolved_tools))
         # No tools bound: this node has to terminate, never loop back into `tools`.
-        graph.add_node("finalize", make_finalize_node(LLMFactory.get_model()))
+        graph.add_node("finalize", make_finalize_node(llm))
 
         graph.add_edge(START, "retrieve_docs")
         graph.add_edge("retrieve_docs", "grade_docs")

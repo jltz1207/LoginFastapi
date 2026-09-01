@@ -4,7 +4,7 @@
 處理的「信心不足」是正交的兩種情境，刻意分開（見 `cascade.py` docstring）。
 
 每次降級都會被記錄下來，可從 `last_degradations` 讀出；呼叫方（未來 M5 的
-`routing/graph.py`）負責把它併入 `RAGState["trace"]`。等 M10 落地
+`routing/graph.py`）負責把它併入 `RoutedAgentState["trace"]`。等 M10 落地
 `ops/observability.py` 後，這裡的記錄方式會改成寫入正式的 observability schema。
 """
 
