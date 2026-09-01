@@ -6,7 +6,6 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
 from pydantic import BaseModel
 from app.core.config import settings
-from app.routing.resolver import ConversationTurn
 
 class BaseAgentState(BaseModel):
     user_id: str
@@ -41,11 +40,9 @@ class RoutedAgentState(BaseAgentState):
     # is widened here instead of forcing every branch through langchain Document.
     documents: list[Any] = []
 
-    # Consumed by ResolverNode/RouterNode. Kept separate from the inherited
-    # `chat_history` (langchain BaseMessage + add_messages reducer) because the
-    # routing layer works in plain role/content turns and must never see
-    # retrieved document content — see RouterContext.resolved_history.
-    conversation_history: list[ConversationTurn] = []
+    # ResolverNode/RouterNode read the inherited `chat_history`
+    # (list[BaseMessage] + add_messages reducer); there is no separate
+    # conversation history on this state.
 
     # All defaulted so a caller can build a state from just the query fields;
     # `route`/`confidence` stay empty until RouterNode writes them, and

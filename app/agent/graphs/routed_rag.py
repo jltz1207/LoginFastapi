@@ -29,18 +29,34 @@ from app.routing.branches.meta import meta_node
 from app.routing.branches.metadata import metadata_query_node
 from app.routing.branches.multi_hop import agentic_subgraph
 from app.routing.branches.no_retrieval import no_retrieval_node
-from app.routing.resolver import ConversationTurn, QueryResolver
+from langchain_core.messages import BaseMessage
+
+from app.routing.resolver import QueryResolver
 from app.routing.router.base import BaseRouter
 from app.routing.router.cascade import CascadeRouter
 from app.routing.router.fallback_chain import FallbackChainRouter
 from app.routing.taxonomy import CONFIDENCE_THRESHOLD, DEFAULT_ROUTE, Route, RouterContext
+
+_DIALOGUE_TYPES = ("human", "ai")
+
+
+def _dialogue_turns(chat_history: list[BaseMessage]) -> list[BaseMessage]:
+    """只保留使用者/助理的對話輪次，餵給 resolver 與 router。
+
+    `chat_history` 是全圖共用的訊息串，lookup 子圖執行 tool 之後產生的
+    `ToolMessage`（內含 web search 結果等檢索內容）也會流進來。
+    `RouterContext.resolved_history` 明文禁止夾帶檢索到的文件內容——避免文件
+    內容夾帶 prompt injection 影響分類結果——所以這裡一律濾掉 tool/system 訊息。
+    """
+    return [msg for msg in chat_history if msg.type in _DIALOGUE_TYPES]
+
 
 def initial_state(
     query: str,
     knowledge_base_id: str,
     tenant_id: str,
     user_id: str,
-    conversation_history: list[ConversationTurn] | None = None,
+    chat_history: list[BaseMessage] | None = None,
 ) -> RoutedAgentState:
     """建構一個乾淨的初始 state。
 
@@ -53,7 +69,7 @@ def initial_state(
         knowledge_base_id=knowledge_base_id,
         tenant_id=tenant_id,
         user_id=user_id,
-        conversation_history=conversation_history or [],
+        chat_history=chat_history or [],
     )
 
 
@@ -64,7 +80,7 @@ class ResolverNode:
         self._resolver = resolver or QueryResolver()
 
     async def __call__(self, state: RoutedAgentState) -> dict:
-        resolved = await self._resolver.resolve(state.query, state.conversation_history)
+        resolved = await self._resolver.resolve(state.query, _dialogue_turns(state.chat_history))
         return {
             "resolved_query": resolved,
             "trace": state.trace + ["resolve: query resolved to standalone question"],
@@ -89,7 +105,10 @@ class RouterNode:
         ctx = RouterContext(
             tenant_id=state.tenant_id,
             knowledge_base_id=state.knowledge_base_id,
-            resolved_history=[turn.content for turn in state.conversation_history],
+            resolved_history=[
+                msg.content if isinstance(msg.content, str) else str(msg.content)
+                for msg in _dialogue_turns(state.chat_history)
+            ],
         )
         trace = list(state.trace)
 

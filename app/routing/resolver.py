@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from pydantic import BaseModel
+from langchain_core.messages import BaseMessage
 
 _REWRITE_SYSTEM_PROMPT = """\
 你是對話歷史消歧器。給定對話歷史與使用者最新一句話，判斷這句話是否依賴前面的
@@ -25,15 +25,14 @@ _REWRITE_SYSTEM_PROMPT = """\
 只輸出改寫後的問句，不要加任何解釋或前綴。"""
 
 
-class ConversationTurn(BaseModel):
-    role: str
-    content: str
-
-
 class QueryRewriter(Protocol):
-    """把 (query, history) 改寫成獨立完整問句的介面。"""
+    """把 (query, history) 改寫成獨立完整問句的介面。
 
-    async def rewrite(self, query: str, history: list[ConversationTurn]) -> str: ...
+    `history` 直接收 langchain `BaseMessage`，跟 `AgentState.chat_history` 同一種
+    型別，不再另外定義一個 role/content 的對話輪次模型。
+    """
+
+    async def rewrite(self, query: str, history: list[BaseMessage]) -> str: ...
 
 
 class LLMQueryRewriter:
@@ -49,8 +48,13 @@ class LLMQueryRewriter:
             self._model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
         return self._model
 
-    async def rewrite(self, query: str, history: list[ConversationTurn]) -> str:
-        history_text = "\n".join(f"{turn.role}: {turn.content}" for turn in history)
+    async def rewrite(self, query: str, history: list[BaseMessage]) -> str:
+        # `msg.type` is langchain's role discriminator ("human"/"ai"/…), and
+        # `msg.content` is str for ordinary turns but a list for multimodal ones.
+        history_text = "\n".join(
+            f"{msg.type}: {msg.content if isinstance(msg.content, str) else msg.content!s}"
+            for msg in history
+        )
         messages = [
             ("system", _REWRITE_SYSTEM_PROMPT),
             ("human", f"對話歷史：\n{history_text}\n\n最新一句話：{query}"),
@@ -67,7 +71,7 @@ class QueryResolver:
         self._rewriter = rewriter or LLMQueryRewriter()
 
     async def resolve(
-        self, query: str, history: list[ConversationTurn] | None = None
+        self, query: str, history: list[BaseMessage] | None = None
     ) -> str:
         history = history or []
         if not history:
