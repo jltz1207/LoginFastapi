@@ -69,13 +69,7 @@ class GlobalSummaryBranch:
 
     async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id: str) -> list[Chunk]:
         collection = StoreIndexer().get_all_documents_in_kb(tenant_id, user_id, knowledge_base_id)
-        ids = results.get("ids", [])
-        documents = results.get("documents", [])
-        metadatas = results.get("metadatas", []) or [{}] * len(ids)
-        return [
-            Chunk(chunk_id=doc_id, content=content, source=(metadata or {}).get("source", doc_id), metadata=metadata or {})
-            for doc_id, content, metadata in zip(ids, documents, metadatas)
-        ]
+        
     
     async def __call__(self, state: RoutedAgentState) -> dict:
         knowledge_base_id = enforce_knowledge_base_id(state)

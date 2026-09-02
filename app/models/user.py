@@ -20,8 +20,6 @@ class User(Base):
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
             UUID(as_uuid=True),
-            default=uuid.uuid4,
-            server_default=func.gen_random_uuid(),
         )
     email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     username: Mapped[str] = mapped_column(String, nullable=False)
