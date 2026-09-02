@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from app.llm.factory import LLMFactory
 from app.routing.branches.common import Chunk, enforce_knowledge_base_id
+from app.vectorstore import StoreIndexer
 
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
@@ -33,16 +34,7 @@ class MapReduceLLM(Protocol):
 
 
 
-async def fetch_document_summaries( knowledge_base_id: str) -> list[Chunk]:
-        collection = 
-        results = collection.get(where={"knowledge_base_id": knowledge_base_id})
-        ids = results.get("ids", [])
-        documents = results.get("documents", [])
-        metadatas = results.get("metadatas", []) or [{}] * len(ids)
-        return [
-            Chunk(chunk_id=doc_id, content=content, source=(metadata or {}).get("source", doc_id), metadata=metadata or {})
-            for doc_id, content, metadata in zip(ids, documents, metadatas)
-        ]
+
 
 
 
@@ -75,11 +67,21 @@ class GlobalSummaryBranch:
         self._llm = llm or LLMFactory.get_model()
         self._batch_size = batch_size
 
+    async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id: str) -> list[Chunk]:
+        collection = StoreIndexer().get_all_documents_in_kb(tenant_id, user_id, knowledge_base_id)
+        ids = results.get("ids", [])
+        documents = results.get("documents", [])
+        metadatas = results.get("metadatas", []) or [{}] * len(ids)
+        return [
+            Chunk(chunk_id=doc_id, content=content, source=(metadata or {}).get("source", doc_id), metadata=metadata or {})
+            for doc_id, content, metadata in zip(ids, documents, metadatas)
+        ]
+    
     async def __call__(self, state: RoutedAgentState) -> dict:
         knowledge_base_id = enforce_knowledge_base_id(state)
         query = state.resolved_query
 
-        summaries = await self._index_client.fetch_document_summaries(knowledge_base_id)
+        summaries = await self.fetch_document_summaries(knowledge_base_id)
         if not summaries:
             return {
                 "answer": _NO_SUMMARIES_MESSAGE,
