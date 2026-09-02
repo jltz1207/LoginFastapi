@@ -39,7 +39,11 @@ class Document(Base):
         nullable=False,
         index=True  
     )
-
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True  
+    )
     # --- File Identity ---
     filename: Mapped[str] = mapped_column(String(500), nullable=False)
     file_extension: Mapped[str] = mapped_column(String(20), nullable=False) # pdf | docx | csv | etc.
