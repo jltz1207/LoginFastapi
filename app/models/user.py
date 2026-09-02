@@ -19,8 +19,10 @@ class User(Base):
         server_default=func.gen_random_uuid(),
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-            UUID(as_uuid=True),
-        )
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True  
+    )
     email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     username: Mapped[str] = mapped_column(String, nullable=False)
     first_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)

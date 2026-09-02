@@ -11,10 +11,10 @@ from app.db.session import Base
 
 
 class IngestionStatus(str, enum.Enum):
-    PENDING = "pending"
-    PROCESSING = "processing"
-    INDEXED = "indexed"
-    FAILED = "failed"
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    INDEXED = "INDEXED"
+    FAILED = "FAILED"
 
 class Document(Base):
     __tablename__ = "documents"
@@ -57,11 +57,16 @@ class Document(Base):
 
     # --- Ingestion Pipeline States ---
     status: Mapped[IngestionStatus] = mapped_column(
-        Enum(IngestionStatus),
-        default=IngestionStatus.PENDING,
-        nullable=False,
-        index=True
-    )
+            Enum(
+                IngestionStatus,
+                native_enum=False,
+                length=50,
+                values_callable=lambda enum_cls: [e.value for e in enum_cls],
+            ),
+            default=IngestionStatus.PENDING,
+            server_default=IngestionStatus.PENDING.value,
+            nullable=False,
+        )
     chunk_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     token_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
