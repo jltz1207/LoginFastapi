@@ -13,10 +13,12 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Protocol
 
+from app.db.session import get_db
 from app.llm.factory import LLMFactory
+from app.models.document import Document, IngestionStatus
 from app.routing.branches.common import Chunk, enforce_knowledge_base_id
-from app.vectorstore import StoreIndexer
 
+from sqlalchemy import select
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
 
@@ -68,7 +70,16 @@ class GlobalSummaryBranch:
         self._batch_size = batch_size
 
     async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id: str) -> list[Chunk]:
-        collection = StoreIndexer().get_all_documents_in_kb(tenant_id, user_id, knowledge_base_id)
+        get_all_docs_stmt = select(Document).where(
+            Document.knowledge_base_id == knowledge_base_id,
+            Document.tenant_id == tenant_id,
+            Document.user_id == user_id,
+            Document.status == IngestionStatus.INDEXED,
+        )
+        async with get_db() as db:
+            all_docs_result = await db.execute(get_all_docs_stmt).scalars().all()
+            
+        return [Chunk(content=doc.summary or "", metadata={"id": doc.id}) for doc in documents]
         
     
     async def __call__(self, state: RoutedAgentState) -> dict:

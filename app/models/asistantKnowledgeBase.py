@@ -36,6 +36,7 @@ class AsistantKnowledgeBase(Base):
         Enum(
             KbStatusEnum,
             native_enum=False,
+            create_constraint=True,
             length=50,
             values_callable=lambda enum_cls: [e.value for e in enum_cls],
         ),

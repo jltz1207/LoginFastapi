@@ -60,6 +60,7 @@ class Document(Base):
             Enum(
                 IngestionStatus,
                 native_enum=False,
+                create_constraint=True,
                 length=50,
                 values_callable=lambda enum_cls: [e.value for e in enum_cls],
             ),
@@ -76,6 +77,8 @@ class Document(Base):
     raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     page_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
     # --- Audit & Control Fields ---
     created_dt: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),

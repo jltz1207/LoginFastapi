@@ -39,12 +39,25 @@ class AsistantMessage(Base):
         index=True  
     )
     sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    role: Mapped[RoleEnum] = mapped_column(String(50), nullable=False)
+
+    role: Mapped[RoleEnum] = mapped_column(
+            Enum(
+                RoleEnum,
+                native_enum=False,
+                create_constraint=True,
+                length=50,
+                values_callable=lambda enum_cls: [e.value for e in enum_cls],
+            ),
+            default=RoleEnum.USER,
+            server_default=RoleEnum.USER.value,
+            nullable=False,
+    )
     content: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[MsgStatusEnum] = mapped_column(
         Enum(
             MsgStatusEnum,
             native_enum=False,
+            create_constraint=True,
             length=50,
             values_callable=lambda enum_cls: [e.value for e in enum_cls],
         ),
