@@ -82,6 +82,13 @@ class GlobalSummaryBranch:
             "trace": state.trace + [f"global: docs={len(summaries)} kb={knowledge_base_id}"],
         }
 
+    '''
+    50 份摘要
+      ├─ 第 1 輪：7 個 batch → 7 次 LLM（並行）→ 7 段中間摘要
+      └─ 第 2 輪：1 個 batch → 1 次 LLM          → 最終答案
+
+    500 份 →  63 → 8 → 1   （3 輪，共 72 次呼叫，但只等 3 個 round trip）
+    '''
     async def _map_reduce(self, query: str, texts: list[str]) -> str:
         async def complete(prompt: str) -> str:
                 llm = LLMFactory.get_model()
