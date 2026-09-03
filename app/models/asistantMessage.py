@@ -10,16 +10,16 @@ from sqlalchemy.sql import func
 from app.db.session import Base
 
 
-class RoleEnum(enum.Enum):
-    USER = "user"
-    AI = "asistant"
-    SYSTEM = "system"
+class RoleEnum(str, enum.Enum):
+    USER = "USER"
+    AI = "AI"
+    SYSTEM = "SYSTEM"
 
 
-class MsgStatusEnum(enum.Enum):
-    SENT = 1
-    STREAMING = 2
-    FAILED = 3
+class MsgStatusEnum(str, enum.Enum):
+    SENT = "SENT"
+    STREAMING = "STREAMING"
+    FAILED = "FAILED"
 
 
 class AsistantMessage(Base):
@@ -33,10 +33,38 @@ class AsistantMessage(Base):
     )
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True, nullable=False)
     knowledge_base_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True, nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True  
+    )
     sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    role: Mapped[RoleEnum] = mapped_column(Enum(RoleEnum), nullable=False)
+
+    role: Mapped[RoleEnum] = mapped_column(
+            Enum(
+                RoleEnum,
+                native_enum=False,
+                create_constraint=True,
+                length=50,
+                values_callable=lambda enum_cls: [e.value for e in enum_cls],
+            ),
+            default=RoleEnum.USER,
+            server_default=RoleEnum.USER.value,
+            nullable=False,
+    )
     content: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[MsgStatusEnum] = mapped_column(Enum(MsgStatusEnum), default=MsgStatusEnum.SENT)
+    status: Mapped[MsgStatusEnum] = mapped_column(
+        Enum(
+            MsgStatusEnum,
+            native_enum=False,
+            create_constraint=True,
+            length=50,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        default=MsgStatusEnum.SENT,
+        server_default=MsgStatusEnum.SENT.value,
+        nullable=False,
+    )
     model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     prompt_tokens: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     completion_tokens: Mapped[Optional[str]] = mapped_column(String, nullable=True)

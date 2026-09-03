@@ -11,10 +11,10 @@ from app.db.session import Base
 
 
 class IngestionStatus(str, enum.Enum):
-    PENDING = "pending"
-    PROCESSING = "processing"
-    INDEXED = "indexed"
-    FAILED = "failed"
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    INDEXED = "INDEXED"
+    FAILED = "FAILED"
 
 class Document(Base):
     __tablename__ = "documents"
@@ -39,7 +39,11 @@ class Document(Base):
         nullable=False,
         index=True  
     )
-
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True  
+    )
     # --- File Identity ---
     filename: Mapped[str] = mapped_column(String(500), nullable=False)
     file_extension: Mapped[str] = mapped_column(String(20), nullable=False) # pdf | docx | csv | etc.
@@ -53,11 +57,17 @@ class Document(Base):
 
     # --- Ingestion Pipeline States ---
     status: Mapped[IngestionStatus] = mapped_column(
-        Enum(IngestionStatus),
-        default=IngestionStatus.PENDING,
-        nullable=False,
-        index=True
-    )
+            Enum(
+                IngestionStatus,
+                native_enum=False,
+                create_constraint=True,
+                length=50,
+                values_callable=lambda enum_cls: [e.value for e in enum_cls],
+            ),
+            default=IngestionStatus.PENDING,
+            server_default=IngestionStatus.PENDING.value,
+            nullable=False,
+        )
     chunk_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     token_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -67,6 +77,8 @@ class Document(Base):
     raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     page_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
     # --- Audit & Control Fields ---
     created_dt: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),

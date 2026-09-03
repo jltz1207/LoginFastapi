@@ -1,7 +1,13 @@
 from langchain_core.tools import tool
 from langchain_community.tools.tavily_search import TavilySearchResults
 
-from app.agent.function.tavily_web_search import tavily_web_search
+MAX_SEARCH_RESULTS = 5
+
+
+async def tavily_web_search(max_results: int, query: str) -> list:
+    tavily_search = TavilySearchResults(max_results=max_results)
+    results = await tavily_search.ainvoke(query)
+    return results
 
 
 @tool
@@ -18,5 +24,7 @@ async def tavily_web_search_tool(max_results: int, query: str)-> list:
     Returns:
         A list of search result objects, each containing a URL, title, and content snippet.
     """
-    results = await tavily_web_search(max_results, query)
+    # max_results is model-controlled, so clamp it: every result is re-sent on each
+    # subsequent loop through `generate`, and an unbounded value blows the budget.
+    results = await tavily_web_search(min(max(max_results, 1), MAX_SEARCH_RESULTS), query)
     return results

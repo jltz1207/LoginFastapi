@@ -8,7 +8,7 @@ from enum import Enum
 class vector_partition_strategy(Enum):
      GLOBAL_COLLECTION = 1
      ONE_USER_ONE_COLLECTION = 2
-
+     ONE_TENANT_ONE_COLLECTION = 3
 
 class Collection_manager():
     def __init__(self, client = None):
@@ -16,18 +16,24 @@ class Collection_manager():
             self.embedding_function = EmbeddingFactory.get_embedding_function()
             self.partition_strategy = vector_partition_strategy(settings.PARTITION_METHOD)
     
-    def get_or_create_collection(self, user_id:str) -> Chroma:
+    def get_or_create_collection(self, user_id:str, tenant_id:str) -> Chroma:
         if self.partition_strategy == vector_partition_strategy.ONE_USER_ONE_COLLECTION:
             vector_store = Chroma(
             client=self.client,
             collection_name=f'{settings.COLLECTION_NAME}_{user_id}',
             embedding_function=self.embedding_function,
             )
-        else: # global
+        elif self.partition_strategy == vector_partition_strategy.ONE_TENANT_ONE_COLLECTION:
             vector_store = Chroma(
             client=self.client,
-            collection_name=settings.COLLECTION_NAME,
+            collection_name=f'{settings.COLLECTION_NAME}_{tenant_id}',
             embedding_function=self.embedding_function,
+            )
+        else:
+            vector_store = Chroma(
+                client=self.client,
+                collection_name=f'{settings.COLLECTION_NAME}',
+                embedding_function=self.embedding_function,
             )
         return vector_store
 

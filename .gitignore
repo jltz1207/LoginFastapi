@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# uv-exported requirements (pyproject.toml + uv.lock are the source of truth)
+requirements.txt
+
 migrations/
 
 chroma_data/

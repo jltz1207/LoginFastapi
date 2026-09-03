@@ -2,33 +2,44 @@ import asyncio
 
 from langchain_core.language_models import BaseChatModel
 
-from app.agent.state import AgentState
+from app.agent.state import LookupAgentState
 from app.core.logging import get_logger
 from app.rag.prompts import QA_PROMPT
 
 logger = get_logger(__name__)
 
 def make_generator_node(llm_with_tools: BaseChatModel):
-    async def generator_execution(state: AgentState) -> dict:
+    async def generator_execution(state: LookupAgentState) -> dict:
         try:
             context_str = "\n".join([f"Document {doc_number}: " + doc.page_content for doc_number, doc in enumerate(state.documents, start=1)])
             messages = QA_PROMPT.format_messages(
                 context=context_str,
-                chat_history=state.chat_messages,
-                question=state.standalone_question or state.question,
+                chat_history=state.chat_history,
+                question= state.standalone_query or state.resolved_query or state.query,
             )
             response = ""
             async with asyncio.timeout(90): # 90 second
                 response = await llm_with_tools.ainvoke(messages)  # AIMessage; may contain tool_calls
             metadata = getattr(response, "response_metadata", {})
             model_used = metadata.get("model", "unknown model")
-            return {"chat_messages": [response], "model_used": model_used}
+            # `generate` is the only writer of the budget counters. Counting the
+            # tool calls it *requests* (not the ones ToolNode executes) means the
+            # conditional edge downstream already sees this round included.
+            usage = getattr(response, "usage_metadata", None) or {}
+            requested_tool_calls = len(getattr(response, "tool_calls", None) or [])
+            return {
+                "chat_history": [response],
+                "model_used": model_used,
+                "tool_calls_count": state.tool_calls_count + requested_tool_calls,
+                "token_count": state.token_count + usage.get("total_tokens", 0),
+            }
         except TimeoutError as e:
-            logger.error(f"LLM Invocation failed: The entire graph execution exceeds 90 second.")
-            print("The entire graph execution exceeds 90 second.")
+            logger.error(f"LLM Invocation failed: The entire graph execution exceeds 90 seconds.")
+            print("The entire graph execution exceeds 90 seconds.")
             raise e
         except Exception as e:
             logger.error(f"LLM Invocation failed: {e}")
+            raise e
     return generator_execution
 
 '''

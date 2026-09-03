@@ -18,13 +18,18 @@ class User(Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True  
+    )
     email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     username: Mapped[str] = mapped_column(String, nullable=False)
     first_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     last_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     hashed_password: Mapped[str] = mapped_column(String, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-
+    
     created_dt: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         default=func.now(),

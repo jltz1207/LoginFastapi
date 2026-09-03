@@ -10,10 +10,10 @@ from sqlalchemy.sql import func
 from app.db.session import Base
 
 
-class KbStatusEnum(enum.Enum):
-    ACTIVE = 1
-    ARCHIVED = 2
-    DELETED = 3
+class KbStatusEnum(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    ARCHIVED = "ARCHIVED"
+    DELETED = "DELETED"
 
 
 class AsistantKnowledgeBase(Base):
@@ -25,9 +25,25 @@ class AsistantKnowledgeBase(Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True  
+    )
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True, nullable=False)
     title: Mapped[Optional[str]] = mapped_column(String, default="Untitled Knowledge Base")
-    status: Mapped[KbStatusEnum] = mapped_column(Enum(KbStatusEnum), default=KbStatusEnum.ACTIVE, nullable=False)
+    status: Mapped[KbStatusEnum] = mapped_column(
+        Enum(
+            KbStatusEnum,
+            native_enum=False,
+            create_constraint=True,
+            length=50,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        default=KbStatusEnum.ACTIVE,
+        server_default=KbStatusEnum.ACTIVE.value,
+        nullable=False,
+    )
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_dt: Mapped[Optional[datetime]] = mapped_column(

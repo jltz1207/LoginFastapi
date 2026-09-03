@@ -15,7 +15,7 @@ from app.api.v1.api import api_router
 from app.db.session import engine
 from app.middleware.request_logger import RequestLoggerMiddleware
 from app.models import Base  # Import to register models
-from app.agent.persistance.client import checkpointer_lifespan
+from app.agent.persistence.client import checkpointer_lifespan
 
 
 @asynccontextmanager

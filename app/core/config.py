@@ -45,6 +45,12 @@ class Settings(BaseSettings):
 
     TAVILY_API_KEY: str = ""
     GRAPH_STRATEGY: int = 2  # Default: GraphStrategy.SEARCH
+
+    # BudgetLimits
+    MAX_TOOL_CALLS: int = 3
+    MAX_TOKENS: int = 20_000
+    MAX_TOOL_RESULT_CHARS: int = 8_000
+
 app_env = os.getenv("APP_ENV", "dev")
 
 if app_env == "prod":
