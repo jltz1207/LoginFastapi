@@ -12,7 +12,7 @@ class StoreIndexer:
         user_collection = self.collection_manager.get_or_create_collection(user_id=user_id, tenant_id=tenant_id)
         user_collection.add_documents([Document(page_content = doc.page_content, metadata= metadata | doc.metadata) for doc in docs])
 
-    def query(self, query: str, tenant_id: str, user_id: str):
+    def retrieve(self, query: str, tenant_id: str, user_id: str):
         user_collection = self.collection_manager.get_or_create_collection(user_id=user_id, tenant_id=tenant_id)
         user_collection.query
 

@@ -141,7 +141,7 @@ class MetadataBranch:
 
         return {
             "answer": answer,
-            "documents": rows,
+            "sql_documents": rows,
             "trace": state.trace
             + [f"metadata: type={request.query_type.value} kb={knowledge_base_id} rows={len(rows)}"],
         }

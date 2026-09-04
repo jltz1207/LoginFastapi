@@ -4,8 +4,17 @@ from uuid import UUID
 from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.core.config import settings
+
+class Chunk(BaseModel):
+    """一段可被引用的內容：檢索出的段落、文件摘要、或多跳查詢的中間結果。"""
+
+    chunk_id: str | None
+    content: str
+    source: str = ""
+    score: float = 0.0
+    metadata: dict = Field(default_factory=dict)
 
 class BaseAgentState(BaseModel):
     user_id: str
@@ -15,7 +24,7 @@ class BaseAgentState(BaseModel):
     query: str
     answer: str = ""
     resolved_query: str = ""
-    documents: list[Document] = []
+    documents: list[Chunk] = []
     model_used: str = ""
     loop_count: int = 0
 
@@ -38,7 +47,6 @@ class RoutedAgentState(BaseAgentState):
     # `routing.branches.common.Chunk`, METADATA emits raw SQL rows (dicts).
     # A TypedDict state never validated this; a Pydantic one does, so the field
     # is widened here instead of forcing every branch through langchain Document.
-    documents: list[Any] = []
 
     # ResolverNode/RouterNode read the inherited `chat_history`
     # (list[BaseMessage] + add_messages reducer); there is no separate
@@ -52,3 +60,4 @@ class RoutedAgentState(BaseAgentState):
     confidence: float = 0.0
     filters: dict = {}
     trace: list[str] = []
+    sql_documents: list[any] = []

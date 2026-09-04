@@ -12,18 +12,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
-    from app.agent.state import RoutedAgentState
-
-
-class Chunk(BaseModel):
-    """一段可被引用的內容：檢索出的段落、文件摘要、或多跳查詢的中間結果。"""
-
-    chunk_id: str
-    content: str
-    source: str = ""
-    score: float = 0.0
-    metadata: dict = Field(default_factory=dict)
+from app.agent.state import RoutedAgentState
 
 
 def enforce_knowledge_base_id(state: RoutedAgentState) -> str:

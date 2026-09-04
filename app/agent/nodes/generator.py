@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 def make_generator_node(llm_with_tools: BaseChatModel):
     async def generator_execution(state: LookupAgentState) -> dict:
         try:
-            context_str = "\n".join([f"Document {doc_number}: " + doc.page_content for doc_number, doc in enumerate(state.documents, start=1)])
+            context_str = "\n".join([f"Document {doc_number}: " + doc.content for doc_number, doc in enumerate(state.documents, start=1)])
             messages = QA_PROMPT.format_messages(
                 context=context_str,
                 chat_history=state.chat_history,

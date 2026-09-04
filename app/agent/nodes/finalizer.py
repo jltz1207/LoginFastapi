@@ -45,7 +45,7 @@ def make_finalize_node(plain_llm: BaseChatModel):
         )
 
         context_str = "\n".join(
-            f"Document {doc_number}: " + doc.page_content
+            f"Document {doc_number}: " + doc.content
             for doc_number, doc in enumerate(state.documents, start=1)
         )
         messages = FINALIZE_PROMPT.format_messages(

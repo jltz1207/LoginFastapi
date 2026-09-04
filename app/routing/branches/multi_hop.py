@@ -18,10 +18,14 @@ import asyncio
 import re
 from typing import TYPE_CHECKING, Protocol
 
+from langchain_core.runnables import Runnable
+
 from app.llm.factory import LLMFactory
 from pydantic import BaseModel
 
-from app.routing.branches.common import Chunk, enforce_knowledge_base_id
+from app.rag.retriever.basic_retriever import BasicRetriever
+from app.routing.branches.common import enforce_knowledge_base_id
+from app.agent.state import Chunk
 
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
@@ -39,23 +43,15 @@ class QueryDecomposer(Protocol):
         """回傳下一輪要問的 sub-query。空清單代表『資訊已經夠了，可以收斂』。"""
         ...
 
-
-class HopRetriever(Protocol):
-    async def retrieve(self, sub_query: str, knowledge_base_id: str) -> list[Chunk]: ...
-
-
 class Synthesizer(Protocol):
     async def synthesize(self, query: str, hops: list[HopResult]) -> str: ...
-
 
 def _normalize(sub_query: str) -> str:
     return re.sub(r"\s+", "", sub_query.strip().lower())
 
-
 def _estimate_cost(sub_query: str, chunks: list[Chunk]) -> int:
     """token-ish 用量估算，只給護欄用的近似值，不是校準過的業務成本。"""
     return len(sub_query) + sum(len(c.content) for c in chunks)
-
 
 class LLMQueryDecomposer:
     def __init__(self, structured_model=None):
@@ -83,31 +79,6 @@ class LLMQueryDecomposer:
         ]
         output = await self._get_structured_model().ainvoke(messages)
         return output.sub_queries
-
-
-class ChromaHopRetriever:
-    def __init__(self, collection_factory=None):
-        self._collection_factory = collection_factory
-
-    def _get_collection(self, knowledge_base_id: str):
-        if self._collection_factory is not None:
-            return self._collection_factory(knowledge_base_id)
-        import chromadb
-
-        client = chromadb.Client()
-        return client.get_or_create_collection(f"kb_{knowledge_base_id}")
-
-    async def retrieve(self, sub_query: str, knowledge_base_id: str) -> list[Chunk]:
-        collection = self._get_collection(knowledge_base_id)
-        results = collection.query(
-            query_texts=[sub_query],
-            n_results=4,
-            where={"knowledge_base_id": knowledge_base_id},
-        )
-        ids = results.get("ids", [[]])[0]
-        documents = results.get("documents", [[]])[0]
-        return [Chunk(chunk_id=chunk_id, content=content) for chunk_id, content in zip(ids, documents)]
-
 
 class LLMMultiHopSynthesizer:
     def __init__(self, model=None):
@@ -137,21 +108,28 @@ class MultiHopBranch:
     def __init__(
         self,
         decomposer: QueryDecomposer | None = None,
-        retriever: HopRetriever | None = None,
+        retriever: Runnable | None = None,
         synthesizer: Synthesizer | None = None,
         recursion_limit: int = 4,
         max_cost_units: int = 20_000,
         global_timeout_seconds: float = 30.0,
     ):
         self._decomposer = decomposer or LLMQueryDecomposer()
-        self._retriever = retriever or ChromaHopRetriever()
+        self._retriever = retriever
         self._synthesizer = synthesizer or LLMMultiHopSynthesizer()
         self._recursion_limit = recursion_limit
         self._max_cost_units = max_cost_units
         self._global_timeout_seconds = global_timeout_seconds
 
+    async def retrieve(self, sub_query: str) -> list[Chunk]:
+                docs = await self._retriever.ainvoke(sub_query)
+                return [Chunk(chunk_id=doc.id, content=doc.page_content) for doc in docs ]
+
     async def __call__(self, state: RoutedAgentState) -> dict:
+        
         knowledge_base_id = enforce_knowledge_base_id(state)
+        if not self.retriever:
+            self.retriever = BasicRetriever().get_retriever(state.tenant_id, state.user_id, knowledge_base_id, top_k=4)
         query = state.resolved_query
 
         try:
@@ -174,9 +152,7 @@ class MultiHopBranch:
             + [f"multi_hop: hops={len(hops)} kb={knowledge_base_id} guardrails={guardrail_hits}"],
         }
 
-    async def _run_hops(
-        self, query: str, knowledge_base_id: str
-    ) -> tuple[list[HopResult], list[str]]:
+    async def _run_hops(self, query: str, knowledge_base_id: str) -> tuple[list[HopResult], list[str]]:
         hops: list[HopResult] = []
         asked: set[str] = set()
         cost_units = 0
@@ -190,7 +166,7 @@ class MultiHopBranch:
 
             for sub_query in new_sub_queries:
                 asked.add(_normalize(sub_query))
-                chunks = await self._retriever.retrieve(sub_query, knowledge_base_id)
+                chunks = await self.retrieve(sub_query)
                 cost_units += _estimate_cost(sub_query, chunks)
                 hops.append(HopResult(sub_query=sub_query, chunks=chunks))
                 if cost_units >= self._max_cost_units:

@@ -8,7 +8,7 @@ def grader_execution(state: LookupAgentState):
     chain = create_grade_source_chain(llm)
     chain_state ={
         "question": state.standalone_query or state.resolved_query or state.query,
-        "context": '\n'.join([doc.page_content for doc in state.documents]) 
+        "context": '\n'.join([doc.content for doc in state.documents]) 
     }
     result = chain.invoke(chain_state)
     return {"grade": result.grade}
