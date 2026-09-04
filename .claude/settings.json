@@ -1,4 +1,5 @@
 {
+  "disableAllHooks": true,
   "permissions": {
     "deny": [
       "Bash(git push:*)",
