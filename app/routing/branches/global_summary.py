@@ -13,6 +13,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from typer import prompt
+
 from app.db.session import get_db_ctx
 from app.llm.factory import LLMFactory
 from app.models.document import Document, IngestionStatus
@@ -39,10 +41,12 @@ async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id
         Document.tenant_id == tenant_id,
         Document.user_id == user_id,
         Document.status == IngestionStatus.INDEXED,
+        Document.deleted_at.is_(None),
+        Document.summary.is_not_(None)
     )
     all_docs_result = []
     async with get_db_ctx() as db:
-        all_docs_result = await (db.execute(get_all_docs_stmt)).scalars().all()
+        all_docs_result = (await db.execute(get_all_docs_stmt)).all()
             
     return [Chunk(chunk_id=str(doc.id), content=doc.summary or "", metadata={"id": doc.id}) for doc in all_docs_result]
 
@@ -53,10 +57,12 @@ class GlobalSummaryBranch:
 
     def __init__(
         self,
-        batch_size: int = 8,
+        batch_size: int = 8, # one query with 8 chunks
+        guard_size: int = 10 # Max: 10 process at the same time
     ):
-        self._batch_size = batch_size   
-    
+        self._batch_size = batch_size
+        self._guard_size = guard_size
+
     async def __call__(self, state: RoutedAgentState) -> dict:
         knowledge_base_id = enforce_knowledge_base_id(state)
         query = state.resolved_query
@@ -83,18 +89,25 @@ class GlobalSummaryBranch:
     500 份 →  63 → 8 → 1   （3 輪，共 72 次呼叫，但只等 3 個 round trip）
     '''
     async def _map_reduce(self, query: str, texts: list[str]) -> str:
+        sem = asyncio.Semaphore(self._guard_size)
         async def complete(prompt: str) -> str:
                 llm = LLMFactory.get_model()
                 response = await llm.ainvoke(prompt)
                 content = response.content
                 return content if isinstance(content, str) else str(content)
+        async def _guarded(prompt: str) -> str:
+            async with sem:
+                return await complete(prompt)
         current = texts
         first_pass = True
         while len(current) > 1 or first_pass:
             batches = [current[i : i + self._batch_size] for i in range(0, len(current), self._batch_size)]
-            current = list(
-                await asyncio.gather(*(complete(_build_map_prompt(query, batch)) for batch in batches), return_exceptions=True)
+            results = list(
+                await asyncio.gather(*(_guarded(_build_map_prompt(query, batch)) for batch in batches), return_exceptions=True)
             )
+            current = [r for r in results if isinstance(r, str)]
+            if not current:
+                raise RuntimeError("all map batches failed")
             first_pass = False
         return current[0]
 
