@@ -1,9 +1,5 @@
 """GLOBAL 分支：document summary index / map-reduce。
 
-讀的是 Celery ingestion worker 產生好的「每份文件摘要」索引（`SummaryIndexClient`），
-不是即時對原始文件做檢索——GLOBAL 問題需要跨整個文件集歸納，逐篇即時摘要在延遲/
-成本上都不划算。
-
 租戶隔離：`knowledge_base_id` 一律用 `common.enforce_knowledge_base_id()` 從
 state 強制取出，不信任 router 輸出的 `state.filters`。
 """
@@ -13,8 +9,6 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from typer import prompt
-
 from app.db.session import get_db_ctx
 from app.llm.factory import LLMFactory
 from app.models.document import Document, IngestionStatus
@@ -23,6 +17,7 @@ from app.routing.branches.common import Chunk, enforce_knowledge_base_id
 from sqlalchemy import select
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
+import uuid
 
 ROUTER_VERSION = "global-summary-v1"
 
@@ -37,14 +32,13 @@ def _build_map_prompt(query: str, texts: list[str]) -> str:
 
 async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id: str) -> list[Chunk]:
     get_all_docs_stmt = select(Document.id, Document.summary).where(
-        Document.knowledge_base_id == knowledge_base_id,
-        Document.tenant_id == tenant_id,
-        Document.user_id == user_id,
+        Document.knowledge_base_id == uuid.UUID(knowledge_base_id),
+        Document.tenant_id == uuid.UUID(tenant_id),
+        Document.user_id == uuid.UUID(user_id),
         Document.status == IngestionStatus.INDEXED,
         Document.deleted_at.is_(None),
-        Document.summary.is_not_(None)
+        Document.summary.is_not(None)
     )
-    all_docs_result = []
     async with get_db_ctx() as db:
         all_docs_result = (await db.execute(get_all_docs_stmt)).all()
             
@@ -60,6 +54,8 @@ class GlobalSummaryBranch:
         batch_size: int = 8, # one query with 8 chunks
         guard_size: int = 10 # Max: 10 process at the same time
     ):
+        if batch_size < 2: 
+            raise ValueError("batch_size must be at least 2")
         self._batch_size = batch_size
         self._guard_size = guard_size
 
@@ -89,6 +85,8 @@ class GlobalSummaryBranch:
     500 份 →  63 → 8 → 1   （3 輪，共 72 次呼叫，但只等 3 個 round trip）
     '''
     async def _map_reduce(self, query: str, texts: list[str]) -> str:
+        if not texts: 
+            return ""
         sem = asyncio.Semaphore(self._guard_size)
         async def complete(prompt: str) -> str:
                 llm = LLMFactory.get_model()
