@@ -11,9 +11,9 @@ state 強制取出，不信任 router 輸出的 `state.filters`。
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
-from app.db.session import get_db
+from app.db.session import get_db_ctx
 from app.llm.factory import LLMFactory
 from app.models.document import Document, IngestionStatus
 from app.routing.branches.common import Chunk, enforce_knowledge_base_id
@@ -26,30 +26,25 @@ ROUTER_VERSION = "global-summary-v1"
 
 _NO_SUMMARIES_MESSAGE = "這個知識庫目前沒有可用的摘要索引，請先確認 ingestion pipeline 是否已產生 document summary。"
 
-
-class SummaryIndexClient(Protocol):
-    async def fetch_document_summaries(self, knowledge_base_id: str) -> list[Chunk]: ...
-
-
 def _build_map_prompt(query: str, texts: list[str]) -> str:
     joined = "\n\n".join(texts)
     return (
         f"以下是幾份文件摘要：\n{joined}\n\n"
         f"請針對問題「{query}」，從這些摘要中萃取相關重點，寫成一段精簡摘要。"
     )
-class SQLSummaryIndexClient:
-    async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id: str) -> list[Chunk]:
-        get_all_docs_stmt = select(Document).where(
-            Document.knowledge_base_id == knowledge_base_id,
-            Document.tenant_id == tenant_id,
-            Document.user_id == user_id,
-            Document.status == IngestionStatus.INDEXED,
-        )
-        all_docs_result = []
-        async with get_db() as db:
-            all_docs_result = await db.execute(get_all_docs_stmt).scalars().all()
+
+async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id: str) -> list[Chunk]:
+    get_all_docs_stmt = select(Document.id, Document.summary).where(
+        Document.knowledge_base_id == knowledge_base_id,
+        Document.tenant_id == tenant_id,
+        Document.user_id == user_id,
+        Document.status == IngestionStatus.INDEXED,
+    )
+    all_docs_result = []
+    async with get_db_ctx() as db:
+        all_docs_result = await (db.execute(get_all_docs_stmt)).scalars().all()
             
-        return [Chunk(content=doc.summary or "", metadata={"id": doc.id}) for doc in all_docs_result]
+    return [Chunk(chunk_id=str(doc.id), content=doc.summary or "", metadata={"id": doc.id}) for doc in all_docs_result]
 
 class GlobalSummaryBranch:
     """`global_summary_node` 的實作（修正原本 `global_summary_node` 是正確的命名。"""
@@ -58,16 +53,14 @@ class GlobalSummaryBranch:
 
     def __init__(
         self,
-        index_client: SummaryIndexClient | None = None,
         batch_size: int = 8,
     ):
-        self.index_client = index_client or SQLSummaryIndexClient()
         self._batch_size = batch_size   
     
     async def __call__(self, state: RoutedAgentState) -> dict:
         knowledge_base_id = enforce_knowledge_base_id(state)
         query = state.resolved_query
-        summaries = await self.index_client.fetch_document_summaries(knowledge_base_id)
+        summaries = await fetch_document_summaries(state.tenant_id, state.user_id, knowledge_base_id)
         if not summaries:
             return {
                 "answer": _NO_SUMMARIES_MESSAGE,
@@ -100,7 +93,7 @@ class GlobalSummaryBranch:
         while len(current) > 1 or first_pass:
             batches = [current[i : i + self._batch_size] for i in range(0, len(current), self._batch_size)]
             current = list(
-                await asyncio.gather(*(complete(_build_map_prompt(query, batch)) for batch in batches))
+                await asyncio.gather(*(complete(_build_map_prompt(query, batch)) for batch in batches), return_exceptions=True)
             )
             first_pass = False
         return current[0]

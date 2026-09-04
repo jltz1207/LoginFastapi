@@ -1,3 +1,4 @@
+from fastapi.concurrency import asynccontextmanager
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.declarative import declarative_base
 from app.core.config import settings
@@ -19,5 +20,11 @@ Base = declarative_base()
 
 # Dependency to get DB session
 async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
+
+# Context manager for getting DB session
+@asynccontextmanager
+async def get_db_ctx():
     async with AsyncSessionLocal() as session:
         yield session
