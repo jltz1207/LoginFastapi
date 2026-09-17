@@ -13,6 +13,7 @@ from app.models.document import Document, IngestionStatus
 from app.rag.cleaning.data_cleaning import clean_chunks, clean_extracted_documents
 from app.rag.loaders.base_loader import base_loader
 from app.rag.pipelines import create_pipeline
+from app.rag.retriever.bm25_index import get_bm25_index_provider
 from app.rag.splitters.chunkerFactory import ChunkerFactory
 from app.schemas import  DocumentUploadResponse
 from app.schemas.documents import DocumentResponse
@@ -86,12 +87,19 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
     chunking_list_str = [doc.page_content for doc in chunking_list]
     token_count = count_tokens(chunking_list_str, settings.EMBEDDING_PROVIDE_TYPE)
     store = get_vector_store_indexer()
-    store.add_documents(
-      chunking_list,
-      tenant_id=str(current_user.tenant_id),
-      user_id=str(current_user.id),
-      metadata=metadata,
-    )
+    try:
+      store.add_documents(
+        chunking_list,
+        tenant_id=str(current_user.tenant_id),
+        user_id=str(current_user.id),
+        metadata=metadata,
+      )
+    finally:
+      # Invalidate even if add_documents failed midway: Chroma may hold a partial write.
+      # Keyed off `metadata` so it matches exactly what the BM25 loader filters on.
+      get_bm25_index_provider().invalidate(
+        metadata["tenant_id"], metadata["user_id"], metadata["knowledge_base_id"]
+      )
     
     factory.print_chunks_transformation(document_list, chunking_list)
     # handle upload process

@@ -39,19 +39,17 @@ docs = await HybridRetriever().retrieve(query, user_id, kb_id, top_k=8)
 ```python
 class RetrieverFactory(abc.ABC):
     @abstractmethod
-    async def get_retriever(
-        self, user_id: str, knowledge_base_id: str, top_k: int = 8
+    def get_retriever(
+        self, tenant_id: str, user_id: str, knowledge_base_id: str, top_k: int = 8
     ) -> Runnable: ...      # Runnable[str, list[Document]]
 
 
 class HybridRetriever(RetrieverFactory):
-    async def get_retriever(self, user_id, knowledge_base_id, top_k=8) -> Runnable:
-        documents = indexer.get_all_documents_in_kb(user_id, knowledge_base_id)
-        if not documents:
-            return get_collection_retriever(user_id, knowledge_base_id, top_k=top_k)
-        bm25 = BM25Retriever.from_documents(documents)      # ← 只建一次
-        bm25.k = top_k
-        dense = get_collection_retriever(user_id, knowledge_base_id, top_k=top_k)
+    def get_retriever(self, tenant_id, user_id, knowledge_base_id, top_k=8) -> Runnable:
+        # 純組裝：BM25 index 在 invoke 時才從 BM25IndexProvider 取（miss 才建）
+        bm25 = CachedBM25Retriever(tenant_id=tenant_id, user_id=user_id,
+                                   knowledge_base_id=knowledge_base_id, k=top_k)
+        dense = get_collection_retriever(tenant_id, user_id, knowledge_base_id, top_k=top_k)
         ensemble = EnsembleRetriever(retrievers=[bm25, dense], weights=self.weights)
         return ensemble | RunnableLambda(lambda docs: docs[:top_k])
 ```
@@ -59,7 +57,7 @@ class HybridRetriever(RetrieverFactory):
 呼叫端：
 
 ```python
-retriever = await HybridRetriever().get_retriever(user_id, kb_id, top_k=8)
+retriever = HybridRetriever().get_retriever(tenant_id, user_id, kb_id, top_k=8)
 docs = await retriever.ainvoke(query)          # 可以重複 invoke，不用重建
 ```
 
@@ -89,7 +87,14 @@ BM25 沒有辦法建在 Chroma 裡，只能在記憶體算。所以 `HybridRetri
 
 Eager 形狀下，這兩步**每個 query 都會重跑一次**。1000 個 chunk 的 KB 就是每次查詢多幾百毫秒到數秒，而且是純浪費 — 同一個 KB 的索引在文件沒變之前完全一樣。
 
-Lazy 形狀把這筆成本關在 `get_retriever()` 裡，呼叫端拿到 Runnable 後可以留著重複用。這是 lazy 最主要的動機。
+Lazy 形狀把這筆成本跟「每個 query」脫鉤，呼叫端拿到 Runnable 後可以留著重複用。這是 lazy 最主要的動機。
+
+> **更新（2026-09-17）**：最初的實作是在 `get_retriever()` 裡 eager 建 BM25 index，
+> 這讓 `get_retriever` 被迫是 `async`（重活得丟 thread），而且每個 request 仍然重建一次。
+> 現在 index 由 `app/rag/retriever/bm25_index.py` 的 `BM25IndexProvider` 依
+> `(tenant_id, user_id, knowledge_base_id)` cache，文件上傳時失效；`CachedBM25Retriever`
+> 在 invoke 時才取 index，miss 的建置跟著 `ainvoke` 跑在 executor thread 上。
+> 所以 `get_retriever()` 只剩純組裝，已改回 sync。推導見 `docs/plans/multi-hop-branch-review.md` 附錄。
 
 （對照組：`BasicRetriever` 只是 `collection.as_retriever(...)`，本身就沒有建構成本，兩種形狀對它沒差 — 但介面要統一，得遷就成本高的那個。）
 
@@ -107,7 +112,7 @@ base_retriever: RetrieverLike
 Lazy 形狀下，rerank 就是一行：
 
 ```python
-base = await HybridRetriever().get_retriever(user_id, kb_id, top_k=8)
+base = HybridRetriever().get_retriever(tenant_id, user_id, kb_id, top_k=8)
 pipeline = with_rerank(base, rerank_top_k=4)     # 仍然是 Runnable[str, list[Document]]
 docs = await pipeline.ainvoke(query)
 ```
@@ -137,13 +142,14 @@ docs = await pipeline.ainvoke(query)
 # app/rag/retriever/base.py
 class RetrieverFactory(abc.ABC):
     @abstractmethod
-    async def get_retriever(
-        self, user_id: str, knowledge_base_id: str, top_k: int = 8
+    def get_retriever(
+        self, tenant_id: str, user_id: str, knowledge_base_id: str, top_k: int = 8
     ) -> Runnable: ...
 ```
 
 配套規則：
 
+- `get_retriever()` 是 **sync、只做組裝**。任何昂貴的準備工作（例如建 BM25 index）都要延到 invoke 時，並且要有 cache，不能放進 `get_retriever()`。
 - 兩個子類（`BasicRetriever` / `HybridRetriever`）的簽名必須**完全一致**，否則抽象基底類別失去意義 — 呼叫端沒辦法拿 `RetrieverFactory` 型別的變數做多型呼叫。
 - 回傳型別統一是 `Runnable[str, list[Document]]`，`HybridRetriever` 要靠 `| RunnableLambda(lambda docs: docs[:top_k])` 收斂筆數，因為 `EnsembleRetriever` 的 RRF **不做截斷**（詳見 `docs/plans/ensemble-retriever-topk-rrf-walkthrough.md`）。
 - 呼叫端一律 `await retriever.ainvoke(query)`，不要用同步的 `.invoke()` — 底層會打 Gemini embedding API，同步呼叫會阻塞整個 FastAPI event loop。

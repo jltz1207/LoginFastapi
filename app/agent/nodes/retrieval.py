@@ -5,11 +5,11 @@ from app.rag.retriever.hybrid_retriever import HybridRetriever
 from app.routing.branches.common import Chunk
 
 
-# async because get_retriever() is a coroutine and with_rerank() ends in an async
-# RunnableLambda — the sync .invoke() path raises on both.
+# async because with_rerank() ends in an async RunnableLambda — the sync .invoke()
+# path raises on it.
 async def retrieval_execution(state: LookupAgentState) -> dict:
 
-    hybrid_retriever = await HybridRetriever((0.6, 0.4)).get_retriever(
+    hybrid_retriever = HybridRetriever((0.6, 0.4)).get_retriever(
         state.tenant_id, state.user_id, state.knowledge_base_id, top_k=4
     )
     pipeline_rerank = with_rerank(hybrid_retriever, rerank_top_k=4)

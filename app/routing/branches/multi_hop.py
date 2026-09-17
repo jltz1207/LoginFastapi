@@ -130,7 +130,7 @@ class MultiHopBranch:
         # Injected retriever wins (tests); otherwise build one scoped to this request's
         # tenant. Never cache it on self: `agentic_subgraph` is a module-level singleton,
         # so writing back would leak the first request's tenant scope to every later user.
-        retriever = self._retriever or await BasicRetriever().get_retriever(
+        retriever = self._retriever or BasicRetriever().get_retriever(
             state.tenant_id, state.user_id, knowledge_base_id, top_k=4
         )
         query = state.resolved_query

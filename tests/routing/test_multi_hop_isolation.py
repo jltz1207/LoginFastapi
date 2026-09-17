@@ -31,7 +31,7 @@ def _state(tenant_id: str, user_id: str, knowledge_base_id: str) -> RoutedAgentS
 def test_retriever_is_scoped_per_request_not_cached_on_shared_instance(monkeypatch):
     calls: list[tuple[str, str, str]] = []
 
-    async def fake_get_retriever(self, tenant_id, user_id, knowledge_base_id, top_k=8):
+    def fake_get_retriever(self, tenant_id, user_id, knowledge_base_id, top_k=8):
         calls.append((tenant_id, user_id, knowledge_base_id))
         return RunnableLambda(
             lambda query: [Document(id=f"{tenant_id}-chunk", page_content=f"{tenant_id}:{query}")]

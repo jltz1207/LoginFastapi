@@ -116,7 +116,7 @@ pipeline、不是真的 invoke，它為什麼要是 `async`？** 這個質疑是
 快取，文件變動才失效），`get_retriever` 就真的只剩組裝，兩個實作都可以是 `sync`，
 `async` 徹底不需要。
 
-### 建議的順序（不要混在一起做）
+### 建議的順序（不要混在一起做）— 三步皆已完成（2026-09-17）
 
 1. **現在**：保留 `async`、補上 `await`（P0-2）。最小改動，先讓 `multi_hop.py` 能跑。
 2. **接著**：`HybridRetriever` 補 `asyncio.to_thread`（P1-2）。止血，不改介面。
@@ -188,7 +188,7 @@ if not self.retriever:
 卻在函式體內完全沒用到——只有 `__call__` 的 trace 字串用了。這個 unused parameter
 正是「租戶邊界其實沒有流到檢索」的訊號。
 
-### [ ] P1-2｜（相關檔案）`HybridRetriever` 在 event loop 上做 blocking 重活
+### [x] P1-2｜（相關檔案）`HybridRetriever` 在 event loop 上做 blocking 重活
 
 **→ Bucket F**（檢索層效能，獨立 PR）
 
@@ -210,7 +210,9 @@ repo 內已有正確的處理範例——`app/rag/reranker/reranker.py:75-76`：
 
 短期修法是把重的部分包進 `asyncio.to_thread`；長期修法見〈附錄〉。
 
-> 短期修法已完成（2026-09-17，`tests/rag/test_hybrid_retriever.py`）。長期修法（BM25 cache provider + 拿掉 `async`）尚未開始，完成後再勾選。
+> 短期修法（`asyncio.to_thread`）與長期修法皆已完成（2026-09-17）。長期修法：BM25 index 抽成
+> `app/rag/retriever/bm25_index.py` 的 `BM25IndexProvider`（LRU + upload 時 invalidate），
+> `get_retriever` 改回 sync。測試：`tests/rag/test_bm25_index.py`、`tests/rag/test_hybrid_retriever.py`。
 
 ### [ ] P2-1｜同一輪內的 sub-query 去重失效
 
