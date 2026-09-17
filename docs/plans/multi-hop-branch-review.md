@@ -37,7 +37,7 @@ if not self.retriever:                   # line 131 → AttributeError
 `self._retriever`，永遠是 `None`。**兩邊名字對不上，讀寫的是兩個不同的東西。**
 
 ---
-### [ ] P0-2｜`get_retriever()` 沒有 `await` → 拿到 coroutine 而不是 Runnable
+### [x] P0-2｜`get_retriever()` 沒有 `await` → 拿到 coroutine 而不是 Runnable
 
 **→ Bucket B**（讓 `multi_hop` 能跑）；拿掉 `async` 本身屬 **Bucket F-3**
 
@@ -128,7 +128,7 @@ pipeline、不是真的 invoke，它為什麼要是 `async`？** 這個質疑是
 搬到呼叫端，而不是解決它。**
 
 ---
-### [ ] P0-3｜（上游）`Chunk` 的 import 是壞的，整張 routed graph 載不進來
+### [x] P0-3｜（上游）`Chunk` 的 import 是壞的，整張 routed graph 載不進來
 
 **→ Bucket A**（解除 blocking import，先決條件）
 
@@ -148,7 +148,10 @@ pipeline、不是真的 invoke，它為什麼要是 `async`？** 這個質疑是
 
 `multi_hop.py:28` 直接從 `app.agent.state` import `Chunk`，反而是目前唯一正確的寫法。
 
-### [ ] P1-1｜module-level singleton + 屬性快取 → 跨租戶資料外洩
+### [x] P1-1｜module-level singleton + 屬性快取 → 跨租戶資料外洩
+
+> 已修（2026-09-17）：retriever 改為 `__call__` 內的 local variable 往下傳，不寫回 `self`；
+> 回歸測試 `tests/routing/test_multi_hop_isolation.py`。
 
 **→ Bucket C**（stateless 化與租戶隔離，本次 review 的主目標）
 
@@ -206,6 +209,8 @@ repo 內已有正確的處理範例——`app/rag/reranker/reranker.py:75-76`：
 > ONNX 推論是 CPU-bound 的同步呼叫，直接在 event loop 裡跑會卡住整個 FastAPI process。
 
 短期修法是把重的部分包進 `asyncio.to_thread`；長期修法見〈附錄〉。
+
+> 短期修法已完成（2026-09-17，`tests/rag/test_hybrid_retriever.py`）。長期修法（BM25 cache provider + 拿掉 `async`）尚未開始，完成後再勾選。
 
 ### [ ] P2-1｜同一輪內的 sub-query 去重失效
 

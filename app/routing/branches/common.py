@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field
+# Chunk is re-exported: global_summary.py and agent/nodes/retrieval.py import it from here.
+from app.agent.state import Chunk, RoutedAgentState
 
-from app.agent.state import RoutedAgentState
+__all__ = ["Chunk", "enforce_knowledge_base_id", "format_citations"]
 
 
 def enforce_knowledge_base_id(state: RoutedAgentState) -> str:

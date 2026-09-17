@@ -121,20 +121,23 @@ class MultiHopBranch:
         self._max_cost_units = max_cost_units
         self._global_timeout_seconds = global_timeout_seconds
 
-    async def retrieve(self, sub_query: str) -> list[Chunk]:
-                docs = await self._retriever.ainvoke(sub_query)
-                return [Chunk(chunk_id=doc.id, content=doc.page_content) for doc in docs ]
+    async def retrieve(self, retriever: Runnable, sub_query: str) -> list[Chunk]:
+        docs = await retriever.ainvoke(sub_query)
+        return [Chunk(chunk_id=doc.id, content=doc.page_content) for doc in docs]
 
     async def __call__(self, state: RoutedAgentState) -> dict:
-        
         knowledge_base_id = enforce_knowledge_base_id(state)
-        if not self._retriever:
-            self._retriever = BasicRetriever().get_retriever(state.tenant_id, state.user_id, knowledge_base_id, top_k=4)
+        # Injected retriever wins (tests); otherwise build one scoped to this request's
+        # tenant. Never cache it on self: `agentic_subgraph` is a module-level singleton,
+        # so writing back would leak the first request's tenant scope to every later user.
+        retriever = self._retriever or await BasicRetriever().get_retriever(
+            state.tenant_id, state.user_id, knowledge_base_id, top_k=4
+        )
         query = state.resolved_query
 
         try:
             hops, guardrail_hits = await asyncio.wait_for(
-                self._run_hops(query, knowledge_base_id),
+                self._run_hops(retriever, query),
                 timeout=self._global_timeout_seconds,
             )
         except asyncio.TimeoutError:
@@ -152,7 +155,7 @@ class MultiHopBranch:
             + [f"multi_hop: hops={len(hops)} kb={knowledge_base_id} guardrails={guardrail_hits}"],
         }
 
-    async def _run_hops(self, query: str, knowledge_base_id: str) -> tuple[list[HopResult], list[str]]:
+    async def _run_hops(self, retriever: Runnable, query: str) -> tuple[list[HopResult], list[str]]:
         hops: list[HopResult] = []
         asked: set[str] = set()
         cost_units = 0
@@ -166,7 +169,7 @@ class MultiHopBranch:
 
             for sub_query in new_sub_queries:
                 asked.add(_normalize(sub_query))
-                chunks = await self.retrieve(sub_query)
+                chunks = await self.retrieve(retriever, sub_query)
                 cost_units += _estimate_cost(sub_query, chunks)
                 hops.append(HopResult(sub_query=sub_query, chunks=chunks))
                 if cost_units >= self._max_cost_units:

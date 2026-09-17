@@ -60,4 +60,4 @@ class RoutedAgentState(BaseAgentState):
     confidence: float = 0.0
     filters: dict = {}
     trace: list[str] = []
-    sql_documents: list[any] = []
+    sql_documents: list[Any] = []
