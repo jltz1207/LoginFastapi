@@ -9,7 +9,7 @@ class EmbeddingFactory:
 
     @classmethod
     def get_embedding_function(cls):
-        if settings.EMBEDDING_MODEL:
+        if not settings.EMBEDDING_MODEL:
             return None
         if cls.provide_type.lower() == 'gemini':
             gemini_ef = GoogleGenerativeAIEmbeddings(

@@ -173,40 +173,6 @@ metadata = {
 
 ## 已知缺陷
 
-### 1. `EmbeddingFactory` 判斷式反了，永遠回 `None`
-
-`app/rag/embeddings/embedding_factory.py:12-13`：
-
-```python
-if settings.EMBEDDING_MODEL:
-    return None
-```
-
-`EMBEDDING_MODEL` 預設就是 `"gemini-embedding-001"`（`app/core/config.py:15`），永遠 truthy，
-所以這個 function **永遠回 `None`**，後面的 Gemini 分支是死碼。
-Chroma 拿到 `embedding_function=None` 會退回自己的預設 embedding，等於 `EMBEDDING_MODEL` 設定完全沒生效。
-
-### 2. `retrieval_execution` 讀了不存在的欄位
-
-`app/agent/nodes/retrieval.py:18`：
-
-```python
-chunks = [Chunk(chunk_id=doc.id, content=doc.content, metadata=doc.metadata) for doc in docs]
-```
-
-上游是 LangChain `Document`，內容欄位叫 `page_content` 不是 `content`。這行會 `AttributeError`。
-
-### 3. `ChromaHopRetriever` 完全繞過 vector store 層
-
-`app/routing/branches/multi_hop.py:88-107` 自己走一套獨立的路：
-
-- 用 `chromadb.Client()`——**in-memory client，不是 `PersistentClient`**
-- collection 名寫死 `kb_{knowledge_base_id}`，跟 `Collection_manager` 的命名規則無關
-- `where` 只過濾 `knowledge_base_id` 一層，不符合三層 filter 的租戶隔離規則
-
-結果是 multi-hop 分支讀的是一個空的、不同的資料庫。
-
----
 
 ## 附註：過期的文件
 

@@ -128,8 +128,8 @@ class MultiHopBranch:
     async def __call__(self, state: RoutedAgentState) -> dict:
         
         knowledge_base_id = enforce_knowledge_base_id(state)
-        if not self.retriever:
-            self.retriever = BasicRetriever().get_retriever(state.tenant_id, state.user_id, knowledge_base_id, top_k=4)
+        if not self._retriever:
+            self._retriever = BasicRetriever().get_retriever(state.tenant_id, state.user_id, knowledge_base_id, top_k=4)
         query = state.resolved_query
 
         try:
