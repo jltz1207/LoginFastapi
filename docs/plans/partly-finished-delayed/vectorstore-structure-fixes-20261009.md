@@ -1,7 +1,7 @@
 # 修正 vector store 結構的缺點
 
 > 建立日期：2026-10-09。對照 commit `6991c34` 之後的 working tree。
-> 缺點的來源與分析見 [`vectorstore-retriever-structure-20261009.md`](../vectorstore/vectorstore-retriever-structure-20261009.md)〈這個結構的優缺點〉。
+> 缺點的來源與分析見 [`vectorstore-retriever-structure-20261009.md`](../../vectorstore/vectorstore-retriever-structure-20261009.md)〈這個結構的優缺點〉。
 
 ## Context
 

@@ -1,15 +1,24 @@
 # docs/plans/ conventions
 
-## Marking a finished plan
+## Classify plans by status folder
 
-When every phase of a plan is finished, add a `[Done]` prefix to its file name:
+Every plan lives in exactly one status folder:
+
+| Folder | Use when |
+|---|---|
+| `in-progress/` | Work on the plan is actively underway |
+| `partly-finished-delayed/` | Some parts are done and the rest is deferred or not yet started |
+| `finished/` | Every part is done, or the document has no remaining work (e.g. a walkthrough) |
 
 ```
-[Done]<name>-YYYYMMDD.md
+docs/plans/
+├── in-progress/
+├── partly-finished-delayed/
+└── finished/
 ```
 
-Example: `vectorstore-structure-fixes-20261009.md` → `[Done]vectorstore-structure-fixes-20261009.md`
-
-- Rename with `git mv`, and do not auto-commit.
-- The date suffix rule in `docs/CLAUDE.md` still applies.
-- After renaming, search `docs/`, `app/`, `CLAUDE.md`, and `README.md` for links to the old filename and update them.
+- New plans start in `in-progress/`.
+- When a plan's status changes, move it with `git mv` (never plain `mv`), and do not auto-commit.
+- Moving a file one level deeper breaks its relative links: after moving, fix `../` links inside the moved file and links from other files that point to it.
+  Also search `docs/`, `app/`, `CLAUDE.md`, and `README.md` for the old path.
+- The date suffix rule in `docs/CLAUDE.md` still applies. Moving between folders alone is not a content update, so it does not change the date.
