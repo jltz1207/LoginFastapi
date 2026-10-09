@@ -410,7 +410,9 @@ sequenceDiagram
 
 ## Phase 7：清理
 
-- 刪除 `StoreIndexer.retrieve()`（`StoreIndexer.py:28-30`，空殼，沒有呼叫端）。
+> **狀態：✅ 已完成（2026-10-09，未 commit）。**
+
+- 刪除 `StoreIndexer.retrieve()`（原 `StoreIndexer.py:28-30`，空殼，沒有呼叫端；`app/routing/branches/multi_hop.py` 的 `retrieve()` 是另一個同名方法，不受影響）。
 - 命名（`Chroma_db`、`Collection_manager`、`StoreIndexer.py`）**不改**：純風格問題，改名會牽動所有 import 與既有文件，收益不抵成本。
 
 ---

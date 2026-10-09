@@ -70,7 +70,6 @@ classDiagram
     }
     class StoreIndexer {
         +add_documents()
-        +retrieve()
         +get_all_documents_in_kb()
     }
     class Collection_manager {
@@ -111,7 +110,6 @@ classDiagram
         <<singleton>>
         +collection_manager: Collection_manager
         +add_documents(docs, tenant_id, user_id, metadata)
-        +retrieve(query, tenant_id, user_id)
         +get_all_documents_in_kb(tenant_id, user_id, kb_id) list~Document~
     }
     class Collection_manager {
@@ -212,7 +210,7 @@ flowchart LR
 1. ~~**三層 tenant filter 寫了兩份，其中一份在 vector store 層之外。**~~ **已修正（2026-10-09，計劃 Phase 1）。**
    原本 dense 的 filter 在 `app/rag/retriever/common.py` 的 `get_collection_retriever()` 組，BM25 的在 `StoreIndexer.get_all_documents_in_kb()` 組，兩份各自維護。
    現在 `get_collection_retriever()` 已刪除，兩條路都經過 `StoreIndexer.scope_filter()`（`StoreIndexer.py:11-21`），
-   外部拿 dense 檢索改呼叫 `StoreIndexer.get_dense_retriever()`（`:32-48`），不必再自己取 `collection_manager`。
+   外部拿 dense 檢索改呼叫 `StoreIndexer.get_dense_retriever()`（`:28-44`），不必再自己取 `collection_manager`。
    `tests/vectorstore/test_store_indexer_scope.py` 用共用 collection（最壞情況）驗證 dense 與 sparse 看到的範圍一致、跨 tenant 看不到。
 2. ~~**cache 無上限，key 與實際 collection 不對齊。**~~ **已修正（2026-10-09，計劃 Phase 3）。**
    原本裸 `dict` 隨 `(user_id, tenant_id)` 組合無限成長，策略 1 / 3 下多個 key 各包一個 wrapper 指向同一個 collection。
@@ -225,7 +223,7 @@ flowchart LR
 5. **`PersistentClient` 綁單機。** 資料存在本機 `./chroma_data`，多台機器無法共用；多個 worker process 同時開同一個目錄的安全性未查證（推論：chromadb 官方建議多 process 情境改用 client/server 模式 `HttpClient`）。
    要擴展時得換成 `chromadb.HttpClient`，所幸 `Collection_manager` 已支援注入 client，換的範圍只在 `client.py`。
 6. ~~**collection 名字沒有 embedding 版本。**~~ **已修正（2026-10-09，計劃 Phase 5）。** 名稱加入 `EMBEDDING_VERSION`，換 model 時遞增版本即可讓新舊向量分開；既有資料用 `scripts/migrate_collection_names.py` 遷移。
-7. **小問題。** `StoreIndexer.retrieve()` 是死碼；命名風格不一致（`Chroma_db`、`Collection_manager`、檔名 `StoreIndexer.py`）。
+7. **小問題。** ~~`StoreIndexer.retrieve()` 是死碼~~（Phase 7 已刪除）；命名風格不一致（`Chroma_db`、`Collection_manager`、檔名 `StoreIndexer.py`）。
 
 ### `client.py`
 
@@ -257,13 +255,14 @@ key 就是 `_collection_name()` 算出的**實際 collection 名稱**（`collect
 ---
 ### `StoreIndexer.py`
 ```
-StoreIndexer 是被設計成唯一入口（add_documents / retrieve / get_all_documents_in_kb 這組 API 形狀就是這個意圖）
+StoreIndexer 是 vector store 層唯一的讀寫入口：所有碰 Chroma 的讀取都在這裡套上 tenant filter
 ```
-三個方法：
+四個方法：
 
+- `scope_filter()`（`StoreIndexer.py:11-21`）：tenant / user / kb 三層 `$and` filter 的唯一來源（Phase 1）。
 - `add_documents()`（`StoreIndexer.py:23-26`）：把 caller 傳的 metadata 用 `metadata | doc.metadata` 合併進每個 chunk 後寫入。
-- `retrieve()`（`StoreIndexer.py:28-30`，舊名 `query()`）：空殼，只寫了 `user_collection.query` 沒有呼叫，是死碼。
-- `get_all_documents_in_kb()`（`StoreIndexer.py:50-57`）：`where` 用 `scope_filter()` 同時過濾
+- `get_dense_retriever()`（`StoreIndexer.py:28-44`）：回傳套好 `scope_filter()` 的 dense retriever（Phase 1，取代 `common.py` 的 `get_collection_retriever()`）。
+- `get_all_documents_in_kb()`（`StoreIndexer.py:46-53`）：`where` 用 `scope_filter()` 同時過濾
   `knowledge_base_id` / `user_id` / `tenant_id`，現在是 **`BM25IndexProvider` 的 document loader**。
   程式碼裡的註解明確說了理由——dense 那半已經三層都過濾，sparse 這半不補齊的話會洩漏出 dense 看不到的文件。
 
@@ -290,7 +289,7 @@ def get_retriever(self, tenant_id, user_id, knowledge_base_id, top_k: int = 8) -
 ### dense 檢索入口：`StoreIndexer.get_dense_retriever()`
 
 原本在 `common.py` 的 `get_collection_retriever()` 已搬進 `StoreIndexer`（計劃 Phase 1），`common.py` 只剩 `format_doc_to_string()` 給 legacy LCEL path 用。
-dense 檢索現在由 `StoreIndexer.get_dense_retriever()`（`app/vectorstore/StoreIndexer.py:32-48`）提供，**租戶邊界在 `scope_filter()` 一處 enforce**：
+dense 檢索現在由 `StoreIndexer.get_dense_retriever()`（`app/vectorstore/StoreIndexer.py:28-44`）提供，**租戶邊界在 `scope_filter()` 一處 enforce**：
 
 ```python
 return collection.as_retriever(
@@ -475,12 +474,12 @@ flowchart LR
 
 1. **`chunk_id` 在 agent path 永遠是 `None`。** `FlashrankReranker._rerank_sync()` 重新建 `Document(page_content, metadata)`
    時沒帶 `id`（`reranker.py:90-94`），`retrieval.py:18` 的 `doc.id` 因此全是 `None`。
-   就算不經 rerank，BM25 那半也拿不到 id：`get_all_documents_in_kb()` 建 `Document` 時沒用 `raw["ids"]`（`StoreIndexer.py:56`）。
+   就算不經 rerank，BM25 那半也拿不到 id：`get_all_documents_in_kb()` 建 `Document` 時沒用 `raw["ids"]`（`StoreIndexer.py:52`）。
 2. **rerank 只重排、不篩選。** agent path 的 `HybridRetriever` `top_k=4` 截斷後才送 reranker，reranker 也收斂到 4——
    cross-encoder 只能在 4 筆裡重排序，和 `FlashrankReranker` docstring 建議的「retriever 寬撈 8、reranker 收斂到 4」不符。
 3. **BM25 cache 只存在單一 process。** 多 worker 部署時 `invalidate()` 只打得到收到 upload 的那個 worker，
    其他 worker 繼續用舊 index，直到被 LRU 淘汰或重啟（`bm25_index.py` 模組 docstring 已註明）。
 4. **任何寫入 / 刪除 chunk 的新路徑都必須記得呼叫 `invalidate()`。** 目前只有 upload 這一處；之後加刪除文件 API 時容易漏。
 5. **`Collection_manager.cache` 沒有上限**，key 數量隨 `(user_id, tenant_id)` 組合成長；且 key 不隨 partition 策略收斂（見上）。
-6. **`StoreIndexer.retrieve()` 是死碼**（`StoreIndexer.py:28-30`）。
+6. ~~**`StoreIndexer.retrieve()` 是死碼**~~ **已刪除（2026-10-09，計劃 Phase 7）。**
 7. **Legacy path 的 `__main__` 跑不起來**：`create_pipeline()` 沒帶必要參數（`pipelines.py:43`）。
