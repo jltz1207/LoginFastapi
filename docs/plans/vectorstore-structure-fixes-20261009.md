@@ -54,7 +54,7 @@ flowchart TD
 flowchart LR
     P1["Phase 1<br/>filter 收斂"] --> P3["Phase 3<br/>Collection cache"]
     P2["Phase 2<br/>async ingestion"]
-    P4["Phase 4<br/>singleton reset"] --> P3
+    P4["Phase 4<br/>singleton reset"]
     P3 --> P5["Phase 5<br/>embedding 版本"]
     P5 --> P6["Phase 6<br/>HttpClient（延後）"]
     P7["Phase 7<br/>清理"]
@@ -68,7 +68,7 @@ flowchart LR
 ```
 
 - Phase 1、2 互相獨立，可以先做、各自一個 commit。
-- Phase 4 先於 Phase 3：Phase 3 要寫 cache 的測試，需要 Phase 4 的 reset 機制。
+- ~~Phase 4 先於 Phase 3~~：實作時改成讓 `Collection_manager` 可注入依賴，Phase 3 的測試不需要 Phase 4（見 Phase 3 的狀態說明）。
 - Phase 5 依賴 Phase 3：collection 名稱的計算要先集中到 `_collection_name()`。
 
 ---
@@ -176,6 +176,13 @@ await asyncio.to_thread(_write_chunks_and_invalidate_bm25, store, chunking_list,
 ---
 
 ## Phase 3：Collection cache 有界、key 對齊實際 collection
+
+> **狀態：✅ 已完成（2026-10-09，未 commit）。** 測試 24 passed（Phase 2 後的 19 + 新增 5）。
+>
+> 與原計劃的差異：
+> - **沒有先做 Phase 4。** 建構子改成可注入 `embedding_function` 與 `partition_strategy`，測試直接建 `Collection_manager`，不經過任何 `lru_cache` singleton，也不需要 API key，所以不依賴 Phase 4 的 reset 機制。
+> - `_collection_name()` 用 `if` 而不是 `match`，跟檔案原本的寫法一致。
+> - 測試另外涵蓋 `GLOBAL_COLLECTION`（策略 1），共 5 個。
 
 **問題**
 

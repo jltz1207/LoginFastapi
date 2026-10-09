@@ -74,7 +74,8 @@ classDiagram
         +get_all_documents_in_kb()
     }
     class Collection_manager {
-        +cache: dict
+        -_cache: OrderedDict
+        +evict(user_id, tenant_id)
         +get_or_create_collection(user_id, tenant_id) Chroma
     }
     RetrieverFactory <|-- BasicRetriever
@@ -117,7 +118,8 @@ classDiagram
         +client: chromadb.PersistentClient
         +embedding_function
         +partition_strategy: vector_partition_strategy
-        +cache: dict~str, Chroma~
+        -_cache: OrderedDict~str, Chroma~
+        -_max_collections: int
         -_collection_name(user_id, tenant_id) str
         +get_or_create_collection(user_id, tenant_id) Chroma
     }
@@ -185,7 +187,7 @@ flowchart LR
     P --> P4["handle cache 省掉重複建構"]
     P --> P5["client 可注入，易測試"]
     C --> C1["✅ 已修正：filter 寫兩份"]
-    C --> C2["cache 無上限、key 與 collection 不對齊"]
+    C --> C2["✅ 已修正：cache 無上限、key 不對齊"]
     C --> C3["lru_cache singleton = 隱藏全域狀態"]
     C --> C4["✅ 已修正：sync 寫入卡住 event loop"]
     C --> C5["PersistentClient 綁單機"]
@@ -212,7 +214,9 @@ flowchart LR
    現在 `get_collection_retriever()` 已刪除，兩條路都經過 `StoreIndexer.scope_filter()`（`StoreIndexer.py:11-21`），
    外部拿 dense 檢索改呼叫 `StoreIndexer.get_dense_retriever()`（`:32-48`），不必再自己取 `collection_manager`。
    `tests/vectorstore/test_store_indexer_scope.py` 用共用 collection（最壞情況）驗證 dense 與 sparse 看到的範圍一致、跨 tenant 看不到。
-2. **cache 無上限，key 與實際 collection 不對齊。** 裸 `dict` 隨 `(user_id, tenant_id)` 組合無限成長；策略 1 / 3 下多個 key 各包一個 wrapper 指向同一個 collection。
+2. ~~**cache 無上限，key 與實際 collection 不對齊。**~~ **已修正（2026-10-09，計劃 Phase 3）。**
+   原本裸 `dict` 隨 `(user_id, tenant_id)` 組合無限成長，策略 1 / 3 下多個 key 各包一個 wrapper 指向同一個 collection。
+   現在是上限 256 的 LRU，key 用實際 collection 名稱，並加了 lock。
 3. **`lru_cache` singleton 是隱藏的全域狀態。** `PARTITION_METHOD`、embedding 設定在第一次呼叫時就被凍結，改設定必須重啟 process；測試之間也要記得 `cache_clear()`，否則會互相污染（目前 `tests/` 裡沒有任何 `cache_clear()` 呼叫）。
 4. ~~**sync 寫入卡住 event loop。**~~ **已修正（2026-10-09，計劃 Phase 2）。**
    原本 `uploadDocument`（`async def`）直接同步呼叫 `store.add_documents()`，embedding API 呼叫與 SQLite 寫入期間整個 FastAPI process 無法處理其他 request。
@@ -221,7 +225,7 @@ flowchart LR
 5. **`PersistentClient` 綁單機。** 資料存在本機 `./chroma_data`，多台機器無法共用；多個 worker process 同時開同一個目錄的安全性未查證（推論：chromadb 官方建議多 process 情境改用 client/server 模式 `HttpClient`）。
    要擴展時得換成 `chromadb.HttpClient`，所幸 `Collection_manager` 已支援注入 client，換的範圍只在 `client.py`。
 6. **collection 名字沒有 embedding 版本。** 換 embedding model 後新舊向量會混在同一個 collection，搜尋結果靜默劣化。
-7. **小問題。** `StoreIndexer.retrieve()` 是死碼；`self.cache` 沒有 lock（並行 miss 最壞只是多建一個等價 wrapper，推論，未實測）；命名風格不一致（`Chroma_db`、`Collection_manager`、檔名 `StoreIndexer.py`）。
+7. **小問題。** `StoreIndexer.retrieve()` 是死碼；命名風格不一致（`Chroma_db`、`Collection_manager`、檔名 `StoreIndexer.py`）。
 
 ### `client.py`
 
@@ -243,11 +247,12 @@ flowchart LR
 `get_or_create_collection(user_id, tenant_id)` 回傳的是 **LangChain 的 `Chroma` wrapper**（不是原生 chromadb collection），
 embedding function 來自 `EmbeddingFactory`。
 
-**新增：handle cache**（commit `f4ca1d9`）。`self.cache: dict[str, Chroma]`（`collection_manager.py:18`），
-cache key 一律是 `{COLLECTION_NAME}_{user_id}_{tenant_id}`（`:19-20`），**與 partition 策略無關**——
-所以策略 1 / 3 下，多個 key 會指向同一個實體 collection，各自持有一個 `Chroma` wrapper。
-這不影響正確性（wrapper 是無狀態的 handle），只是重複物件。
+**handle cache**（`f4ca1d9` 加入，2026-10-09 Phase 3 改寫）。`self._cache` 是有上限的 LRU（`DEFAULT_MAX_COLLECTIONS = 256`），
+key 就是 `_collection_name()` 算出的**實際 collection 名稱**（`collection_manager.py:39-46`），所以一個實體 collection 只對應一個 `Chroma` handle。
+存取有 `threading.Lock`；`evict()`（`:69-72`）給之後的刪除功能用。細節見 `vectorstore-collection-handle-cost-20261009.md`〈現況的 cache〉。
 因為 `Collection_manager` 由 `StoreIndexer` 持有、`StoreIndexer` 又是 singleton，這個 cache 實際上是 process-wide。
+
+建構子可注入 `client`、`embedding_function`、`partition_strategy`、`max_collections`；沒傳時才讀 `settings` / `EmbeddingFactory`，測試因此不需要 API key。
 
 ---
 ### `StoreIndexer.py`

@@ -58,7 +58,7 @@ timeline
 | `chats.py` 的 tenant 佔位換成真值 | ✅ 完成 | `app/api/v1/endpoints/chats.py:42` |
 | 預設改為 per-tenant | ❌ 仍是 `PARTITION_METHOD=2`（per-user） | `app/core/config.py:18` |
 | 分區策略改為 per-tenant 屬性 | ❌ 仍是全域 env var | `app/core/config.py:18` |
-| collection 名帶 embedding 版本 | ❌ 未做 | `collection_manager.py:28,34,40` |
+| collection 名帶 embedding 版本 | ❌ 未做 | `collection_manager.py:39-46`（`_collection_name()`） |
 | `where` 組裝收斂成單一守門函式 | ✅ 完成（2026-10-09） | `StoreIndexer.scope_filter()`，`StoreIndexer.py:11-21` |
 
 ---
@@ -134,7 +134,7 @@ flowchart TD
 
 ### 1. collection 名字要帶 embedding 版本（未做）
 
-現在的名字是 `{COLLECTION_NAME}` / `_{user_id}` / `_{tenant_id}`（`collection_manager.py:28,34,40`）。
+現在的名字是 `{COLLECTION_NAME}` / `_{user_id}` / `_{tenant_id}`（`collection_manager.py:39-46` 的 `_collection_name()`；Phase 3 之後名稱只在這裡算，加版本號只要改這一處）。
 哪天改 `EMBEDDING_MODEL` 或 `EMBEDDING_PROVIDE_TYPE`（`app/core/config.py:15,19`），新舊維度的向量會混進同一個 collection，**搜尋結果靜默劣化而不會報錯**。
 
 建議：
