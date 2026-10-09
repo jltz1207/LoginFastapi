@@ -54,7 +54,7 @@ flowchart TD
 flowchart LR
     P1["Phase 1<br/>filter 收斂"] --> P3["Phase 3<br/>Collection cache"]
     P2["Phase 2<br/>async ingestion"]
-    P4["Phase 4<br/>singleton reset"]
+    P4["Phase 4<br/>singleton reset<br/>（延後）"]
     P3 --> P5["Phase 5<br/>embedding 版本"]
     P5 --> P6["Phase 6<br/>HttpClient（延後）"]
     P7["Phase 7<br/>清理"]
@@ -63,8 +63,8 @@ flowchart LR
     classDef mid fill:#fef3c7,stroke:#d97706,color:#78350f
     classDef low fill:#e2e8f0,stroke:#64748b,color:#1e293b
     class P1,P2 high
-    class P3,P4,P5 mid
-    class P6,P7 low
+    class P3,P5 mid
+    class P4,P6,P7 low
 ```
 
 - Phase 1、2 互相獨立，可以先做、各自一個 commit。
@@ -247,6 +247,62 @@ class Collection_manager:
 
 ## Phase 4：singleton 可重置
 
+> **狀態：⏸ 延後（2026-10-09 決定）。**
+>
+> - **原本排它的理由消失了**：Phase 4 原本是 Phase 3 測試的前置，但 Phase 3 改成讓 `Collection_manager` 可注入依賴，測試不再經過 singleton。
+> - **目前沒有測試會踩到問題**：現有測試全部注入假物件——Phase 1 注入 `collection_manager`、Phase 2 替換 `get_bm25_index_provider`、Phase 3 注入 `embedding_function` / `partition_strategy`——沒有任何測試呼叫真正的 `get_vector_store_indexer()` / `get_chroma_db()` / `get_bm25_index_provider()`，所以「測試之間互相污染」目前不會發生。
+> - **觸發條件**：第一個需要呼叫真正 singleton 的測試出現時（例如走完整 route 的整合測試），再加 `tests/conftest.py`。
+> - 「設定被凍結、改設定要重啟」這一半本來就只打算寫進註解、不改行為，可以等之後動到 `client.py`（Phase 6）時一起寫。
+
+### 背景：什麼是這裡說的 singleton
+
+```python
+@lru_cache(maxsize=1)
+def get_vector_store_indexer() -> StoreIndexer:
+    return StoreIndexer()
+```
+
+`@lru_cache` 讓函式只在**第一次**呼叫時真的建立物件，之後整個 process 都回傳同一個。一共有三個：
+
+| 函式 | 建出來的東西 | 建立時讀的設定 |
+|---|---|---|
+| `get_chroma_db()` | `PersistentClient` | `CHROMA_PERSIST_DIRECTORY` |
+| `get_vector_store_indexer()` | `StoreIndexer` → `Collection_manager` | `PARTITION_METHOD`、embedding 設定 |
+| `get_bm25_index_provider()` | `BM25IndexProvider` | （cache 內容） |
+
+```mermaid
+sequenceDiagram
+    participant A as 第一次呼叫
+    participant C as lru_cache
+    participant B as 之後的呼叫
+
+    A->>C: get_vector_store_indexer()
+    C->>C: 讀 settings，建立 StoreIndexer，存起來
+    C-->>A: indexer
+    Note over C: settings 之後再怎麼改都不會重讀
+    B->>C: get_vector_store_indexer()
+    C-->>B: 同一個 indexer（舊設定）
+```
+
+這帶來兩個問題：
+
+- **問題 A：設定被凍結。** 啟動時 `PARTITION_METHOD=2`，之後改成 `3`，已建好的 `Collection_manager` 仍照 `2` 切 collection，必須重啟 process。
+- **問題 B：測試之間互相污染。**
+
+  ```python
+  def test_a():
+      settings.PARTITION_METHOD = 2
+      indexer = get_vector_store_indexer()   # 第一次呼叫：建出「策略 2」的物件並快取
+
+  def test_b():
+      settings.PARTITION_METHOD = 3
+      indexer = get_vector_store_indexer()   # 拿到的是 test_a 留下的「策略 2」物件
+  ```
+
+  `test_b` 以為在測策略 3，實際用的是策略 2。單獨跑會過、一起跑會錯，結果還取決於測試執行順序。
+
+Phase 4 只處理問題 B（每個測試後 `cache_clear()`）；問題 A 只寫進註解，不改行為（見下方〈不做〉）。
+
 **問題**：`get_chroma_db()`、`get_vector_store_indexer()`、`get_bm25_index_provider()` 都是 `lru_cache`，設定在第一次呼叫時凍結；`tests/` 裡沒有任何 `cache_clear()`，測試之間可能互相污染。
 
 **改動**
@@ -348,8 +404,8 @@ sequenceDiagram
 | `app/vectorstore/collection_manager.py` | 3、5 |
 | `app/vectorstore/client.py` | 4、6 |
 | `app/core/config.py` | 5、6 |
-| `tests/conftest.py`（新） | 4 |
-| `tests/vectorstore/test_scope_filter.py`（新） | 1 |
+| `tests/conftest.py`（新，Phase 4 延後） | 4 |
+| `tests/vectorstore/test_store_indexer_scope.py`（新） | 1 |
 | `tests/vectorstore/test_collection_manager.py`（新） | 3 |
 | `scripts/migrate_collection_names.py`（新，`scripts/` 目錄目前不存在） | 5 |
 | `docs/vectorstore/*.md` | 每個 Phase 完成後更新對應段落，並依 `docs/CLAUDE.md` 改檔名日期 |
