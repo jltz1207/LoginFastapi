@@ -138,31 +138,40 @@ flowchart LR
 
 ## Phase 2：ingestion 不再卡住 event loop
 
+> **狀態：✅ 已完成（2026-10-09，未 commit）。** 測試 19 passed（Phase 1 後的 15 + 新增 4）；手動上傳驗證尚未做。
+
 **問題**：`uploadDocument` 是 `async def`（`knowledgeBases.py:55`），卻同步呼叫 `store.add_documents()`（`:90-95`），其中包含 embedding API 呼叫與 SQLite 寫入；執行期間整個 FastAPI process 無法處理其他 request。
 
 **改動**：`app/api/v1/endpoints/knowledgeBases.py`
 
 ```python
-try:
-    await asyncio.to_thread(
-        store.add_documents,
-        chunking_list,
-        tenant_id=str(current_user.tenant_id),
-        user_id=str(current_user.id),
-        metadata=metadata,
+def _write_chunks_and_invalidate_bm25(store, chunks, metadata: dict) -> None:
+  try:
+    store.add_documents(chunks, tenant_id=metadata["tenant_id"], user_id=metadata["user_id"], metadata=metadata)
+  finally:
+    get_bm25_index_provider().invalidate(
+      metadata["tenant_id"], metadata["user_id"], metadata["knowledge_base_id"]
     )
-finally:
-    get_bm25_index_provider().invalidate(...)
+
+# in uploadDocument
+await asyncio.to_thread(_write_chunks_and_invalidate_bm25, store, chunking_list, metadata)
 ```
 
 - 沿用 `FlashrankReranker.rerank()` 已經在用的 `asyncio.to_thread` 寫法，保持一致。
-- `invalidate()` 仍在 `finally`，且在 `add_documents` 結束**之後**才執行——`await` 保證這個順序，`BM25IndexProvider` 的 generation counter 也照常運作。
+- **與原計劃的差異：`invalidate()` 移進 thread 裡。** 原計劃是 `try: await asyncio.to_thread(add_documents) finally: invalidate()`，
+  但 request 被取消時 `await` 會立刻丟出 `CancelledError`、`finally` 馬上執行，worker thread 卻還在寫——失效比寫入早完成，
+  期間的 BM25 重建會把寫入前的 index 存進 cache。實測舊寫法的事件順序是 `write-start → invalidate → write-end`。
+  放進同一個 thread 後，失效一定在寫入（成功或失敗）之後。
 - 同一個 route 裡的 `base_loader.load()`、chunking、`count_tokens()` 也是 CPU-bound 同步呼叫（推論：大檔時可能也有可感延遲，未量測）。這次只處理 `add_documents()`，其他列入〈不在這次範圍內〉。
 
 **驗證**
 
-- 手動：上傳一個接近 10 MB 的 PDF，同時對 `/docs` 或另一個輕量 endpoint 連續發 request，確認後者不再等上傳結束才回應。
-- 自動：單元測試 mock `add_documents` 為 `time.sleep(0.5)`，用 `httpx.AsyncClient` 同時發 upload 與另一個 request，斷言後者先完成。
+- 自動（`tests/api/test_upload_indexing.py`，已完成）：
+  - 假 store 的 `add_documents` 用 `time.sleep(0.3)` 代替 embedding 與寫入，跑在 `asyncio.to_thread` 時 event loop 上的 ticker 仍持續前進，且寫入跑在非 event loop thread。
+  - 正常與寫入失敗兩種情況，事件順序都是 `write → invalidate`。
+  - request 被取消時，`invalidate` 要等寫入結束才發生。
+- 手動（尚未做）：上傳一個接近 10 MB 的 PDF，同時對另一個輕量 endpoint 連續發 request，確認後者不再等上傳結束才回應。
+  自動測試測的是 helper + `to_thread` 的行為，沒有走完整的 route（route 依賴 DB、auth、檔案儲存），所以 route 本身是否真的用了 `to_thread` 只靠 code review 確認。
 
 ---
 
@@ -328,6 +337,7 @@ sequenceDiagram
 | `app/rag/retriever/hybrid_retriever.py`、`basic_retriever.py`、`app/rag/pipelines.py` | 1 |
 | `tests/rag/test_hybrid_retriever.py` | 1 |
 | `app/api/v1/endpoints/knowledgeBases.py` | 2 |
+| `tests/api/test_upload_indexing.py`（新） | 2 |
 | `app/vectorstore/collection_manager.py` | 3、5 |
 | `app/vectorstore/client.py` | 4、6 |
 | `app/core/config.py` | 5、6 |

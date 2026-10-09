@@ -50,7 +50,7 @@ timeline
 
 | 落地步驟 | 狀態 | 位置 |
 |---|---|---|
-| ingestion 寫入三個 metadata key | ✅ 完成 | `app/api/v1/endpoints/knowledgeBases.py:64-68` |
+| ingestion 寫入三個 metadata key | ✅ 完成 | `app/api/v1/endpoints/knowledgeBases.py:87-91` |
 | dense 檢索三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:32-48` |
 | BM25 loader 三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:50-57` |
 | DB 加 `tenant_id`（users / KB / documents） | ✅ 完成 | `app/models/user.py:21`、`asistantKnowledgeBase.py:28`、`document.py:42` |
@@ -155,7 +155,7 @@ flowchart LR
     R["retrieval request"] --> P{"BM25IndexProvider<br/>cache hit?"}
     P -->|hit| I["回傳既有 index"]
     P -->|miss| L["get_all_documents_in_kb()<br/>整個 KB 撈回記憶體"] --> BLD["BM25Retriever.from_documents()"] --> I
-    UP["POST /upload"] -->|finally| INV["invalidate(tenant, user, kb)"] -.-> P
+    UP["POST /upload"] -->|"寫入後（同一 worker thread）"| INV["invalidate(tenant, user, kb)"] -.-> P
 ```
 
 剩下的限制：

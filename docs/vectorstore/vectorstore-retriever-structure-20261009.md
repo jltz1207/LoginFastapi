@@ -21,7 +21,7 @@ flowchart LR
     CH --> CL["clean_chunks()"]
     CL --> AD["StoreIndexer.add_documents()<br/>metadata: tenant / user / kb"]
     AD --> DB[("Chroma")]
-    AD -->|finally| INV["BM25IndexProvider.invalidate(tenant, user, kb)"]
+    AD -->|"同一個 worker thread，finally"| INV["BM25IndexProvider.invalidate(tenant, user, kb)"]
 ```
 
 ### Retrieval（agent 主線）
@@ -187,7 +187,7 @@ flowchart LR
     C --> C1["✅ 已修正：filter 寫兩份"]
     C --> C2["cache 無上限、key 與 collection 不對齊"]
     C --> C3["lru_cache singleton = 隱藏全域狀態"]
-    C --> C4["sync 寫入卡住 event loop"]
+    C --> C4["✅ 已修正：sync 寫入卡住 event loop"]
     C --> C5["PersistentClient 綁單機"]
     C --> C6["collection 名無 embedding 版本"]
 
@@ -214,8 +214,10 @@ flowchart LR
    `tests/vectorstore/test_store_indexer_scope.py` 用共用 collection（最壞情況）驗證 dense 與 sparse 看到的範圍一致、跨 tenant 看不到。
 2. **cache 無上限，key 與實際 collection 不對齊。** 裸 `dict` 隨 `(user_id, tenant_id)` 組合無限成長；策略 1 / 3 下多個 key 各包一個 wrapper 指向同一個 collection。
 3. **`lru_cache` singleton 是隱藏的全域狀態。** `PARTITION_METHOD`、embedding 設定在第一次呼叫時就被凍結，改設定必須重啟 process；測試之間也要記得 `cache_clear()`，否則會互相污染（目前 `tests/` 裡沒有任何 `cache_clear()` 呼叫）。
-4. **sync 寫入卡住 event loop。** `uploadDocument` 是 `async def`（`knowledgeBases.py:55`），卻直接同步呼叫 `store.add_documents()`——裡面包含呼叫 embedding API 與寫 SQLite，執行期間整個 FastAPI process 無法處理其他 request。
-   （檢索端沒有這個問題：dense 走 `ainvoke`，BM25 由 `BaseRetriever` 丟進 executor。）
+4. ~~**sync 寫入卡住 event loop。**~~ **已修正（2026-10-09，計劃 Phase 2）。**
+   原本 `uploadDocument`（`async def`）直接同步呼叫 `store.add_documents()`，embedding API 呼叫與 SQLite 寫入期間整個 FastAPI process 無法處理其他 request。
+   現在改成 `await asyncio.to_thread(_write_chunks_and_invalidate_bm25, ...)`（`knowledgeBases.py:113`），寫入與 BM25 失效都在 worker thread 上執行。
+   （檢索端本來就沒有這個問題：dense 走 `ainvoke`，BM25 由 `BaseRetriever` 丟進 executor。）
 5. **`PersistentClient` 綁單機。** 資料存在本機 `./chroma_data`，多台機器無法共用；多個 worker process 同時開同一個目錄的安全性未查證（推論：chromadb 官方建議多 process 情境改用 client/server 模式 `HttpClient`）。
    要擴展時得換成 `chromadb.HttpClient`，所幸 `Collection_manager` 已支援注入 client，換的範圍只在 `client.py`。
 6. **collection 名字沒有 embedding 版本。** 換 embedding model 後新舊向量會混在同一個 collection，搜尋結果靜默劣化。
@@ -415,7 +417,7 @@ checkpointer 依 `thread_id` 存 state，不重設的話會跨輪累積、幾個
 
 ## Ingestion 端的 metadata 契約與 cache 失效
 
-`app/api/v1/endpoints/knowledgeBases.py:64-68` 在寫入前組出三個 key：
+`app/api/v1/endpoints/knowledgeBases.py:87-91` 在寫入前組出三個 key：
 
 ```python
 metadata = {
@@ -427,10 +429,31 @@ metadata = {
 
 三個值都必須是 `str`——型別錯 Chroma 不會 raise，只會靜默回 0 筆。見 `docs/id-type-convention-20260827.md`。
 
-寫入後在 `finally` 裡呼叫 `get_bm25_index_provider().invalidate(...)`（`knowledgeBases.py:89-102`）：
+寫入與失效包在 `_write_chunks_and_invalidate_bm25()`（`knowledgeBases.py:30-49`），由 route 用 `asyncio.to_thread` 丟到 worker thread（`:113`）：
 
-- 放 `finally` 是因為 `add_documents` 中途失敗時 Chroma 可能已有部分寫入。
+- 寫入後在 `finally` 裡呼叫 `get_bm25_index_provider().invalidate(...)`：`add_documents` 中途失敗時 Chroma 可能已有部分寫入。
 - 參數直接取自 `metadata`，保證和 BM25 loader 的過濾條件完全一致。
+- **`invalidate()` 放在 thread 裡、而不是 `await` 之後**：request 被取消時，`await` 會立刻丟出 `CancelledError`，但 worker thread 會繼續寫。
+  如果失效寫在 `await` 外面的 `finally`，它會比寫入先完成，期間若有 BM25 重建，就會把寫入前的 index 存進 cache（generation counter 擋不住，因為失效已經先發生了）。
+
+```mermaid
+sequenceDiagram
+    participant R as uploadDocument（event loop）
+    participant W as worker thread
+    participant P as BM25IndexProvider
+
+    R->>W: asyncio.to_thread(_write_chunks_and_invalidate_bm25)
+    W->>W: add_documents()（embedding API + SQLite）
+    Note over R: 此時 event loop 可處理其他 request
+    alt request 被取消
+        R--xR: CancelledError，route 結束
+        Note over W: thread 繼續寫，不受影響
+    end
+    W->>P: finally: invalidate(tenant, user, kb)
+    Note over P: 一定在寫入完成之後
+```
+
+實測（`tests/api/test_upload_indexing.py` 與一次性腳本）：取消 request 時，舊寫法的事件順序是 `write-start → invalidate → write-end`，新寫法是 `write-start → write-end → invalidate`。
 
 ---
 
