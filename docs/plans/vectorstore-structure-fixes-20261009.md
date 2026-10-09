@@ -75,6 +75,8 @@ flowchart LR
 
 ## Phase 1：tenant filter 收斂成單一來源
 
+> **狀態：✅ 已完成（2026-10-09，未 commit）。** 測試 15 passed（原 11 + 新增 4）。
+
 **問題**：`common.py:7-14` 與 `StoreIndexer.py:26-30` 各組一份 `$and` filter，改一份忘一份時 sparse / dense 的隔離範圍會不一致，且不會報錯。
 
 ![Alternative Text][1791528760511]
@@ -302,7 +304,7 @@ sequenceDiagram
 
 ## Phase 7：清理
 
-- 刪除 `StoreIndexer.retrieve()`（`StoreIndexer.py:15-17`，空殼，沒有呼叫端）。
+- 刪除 `StoreIndexer.retrieve()`（`StoreIndexer.py:28-30`，空殼，沒有呼叫端）。
 - 命名（`Chroma_db`、`Collection_manager`、`StoreIndexer.py`）**不改**：純風格問題，改名會牽動所有 import 與既有文件，收益不抵成本。
 
 ---

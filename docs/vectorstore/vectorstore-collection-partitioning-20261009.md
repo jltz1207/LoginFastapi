@@ -51,15 +51,15 @@ timeline
 | 落地步驟 | 狀態 | 位置 |
 |---|---|---|
 | ingestion 寫入三個 metadata key | ✅ 完成 | `app/api/v1/endpoints/knowledgeBases.py:64-68` |
-| dense 檢索三層過濾 | ✅ 完成 | `app/rag/retriever/common.py:7-14` |
-| BM25 loader 三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:25-31` |
+| dense 檢索三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:32-50` |
+| BM25 loader 三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:52-59` |
 | DB 加 `tenant_id`（users / KB / documents） | ✅ 完成 | `app/models/user.py:21`、`asistantKnowledgeBase.py:28`、`document.py:42` |
 | `ONE_TENANT_ONE_COLLECTION` 策略 | ✅ 完成（但非預設） | `app/vectorstore/collection_manager.py:11` |
 | `chats.py` 的 tenant 佔位換成真值 | ✅ 完成 | `app/api/v1/endpoints/chats.py:42` |
 | 預設改為 per-tenant | ❌ 仍是 `PARTITION_METHOD=2`（per-user） | `app/core/config.py:18` |
 | 分區策略改為 per-tenant 屬性 | ❌ 仍是全域 env var | `app/core/config.py:18` |
 | collection 名帶 embedding 版本 | ❌ 未做 | `collection_manager.py:28,34,40` |
-| `where` 組裝收斂成單一守門函式 | ❌ 兩處各自拼 | `common.py:7-14`、`StoreIndexer.py:26-30` |
+| `where` 組裝收斂成單一守門函式 | ✅ 完成（2026-10-09） | `StoreIndexer.scope_filter()`，`StoreIndexer.py:11-21` |
 
 ---
 
@@ -77,7 +77,7 @@ flowchart LR
         S -->|3| PT["{COLLECTION_NAME}_{tenant_id}"]
     end
     subgraph Query["檢索端：三層 $and filter"]
-        D["dense<br/>get_collection_retriever()"]
+        D["dense<br/>StoreIndexer.get_dense_retriever()"]
         B["sparse<br/>get_all_documents_in_kb() → BM25"]
     end
     M --> S

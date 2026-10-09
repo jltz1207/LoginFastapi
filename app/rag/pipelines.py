@@ -7,7 +7,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic.v1 import BaseModel
 
 from app.rag.chains import create_qa_prompt_chain, create_condense_question_chain
-from app.rag.retriever.common import get_collection_retriever, format_doc_to_string
+from app.rag.retriever.common import format_doc_to_string
+from app.vectorstore.StoreIndexer import get_vector_store_indexer
 
 class State(BaseModel):
     chat_history: list[BaseMessage]
@@ -23,7 +24,7 @@ def create_pipeline(tenant_id: str, user_id: str, knowledge_base_id: str) -> Run
     )
     condense_question_chain = create_condense_question_chain(llm)
     qa_prompt_chain = create_qa_prompt_chain(llm)
-    retriever = get_collection_retriever(tenant_id, user_id, knowledge_base_id)
+    retriever = get_vector_store_indexer().get_dense_retriever(tenant_id, user_id, knowledge_base_id)
     chain = RunnablePassthrough.assign(
         condensed_question = condense_question_chain # output str, condensed_question
     ).assign(

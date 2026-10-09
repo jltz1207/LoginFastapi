@@ -69,8 +69,8 @@ pie showData
 
 ## 放進一個 request 的比例看
 
-hybrid retrieval 一個 request 會呼叫兩次 `get_or_create_collection()`：dense 在 `app/rag/retriever/common.py:6`；
-BM25 只有在 **cache miss** 時才經 `StoreIndexer.get_all_documents_in_kb()`（`StoreIndexer.py:20`）呼叫。
+hybrid retrieval 一個 request 會呼叫兩次 `get_or_create_collection()`：dense 在 `StoreIndexer.get_dense_retriever()`（`app/vectorstore/StoreIndexer.py:42`）；
+BM25 只有在 **cache miss** 時才經 `StoreIndexer.get_all_documents_in_kb()`（`StoreIndexer.py:53`）呼叫。
 
 ```mermaid
 sequenceDiagram
