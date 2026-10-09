@@ -39,11 +39,14 @@ class Collection_manager():
     def _collection_name(self, user_id: str, tenant_id: str) -> str:
         # The actual Chroma collection name, used as the cache key too, so one physical
         # collection maps to exactly one cached handle under every strategy.
+        # EMBEDDING_VERSION keeps vectors from different embedding models apart.
+        base = f"{settings.COLLECTION_NAME}_{settings.EMBEDDING_VERSION}"
         if self.partition_strategy == vector_partition_strategy.ONE_USER_ONE_COLLECTION:
-            return f"{settings.COLLECTION_NAME}_{user_id}"
+            return f"{base}_{user_id}"
         if self.partition_strategy == vector_partition_strategy.ONE_TENANT_ONE_COLLECTION:
-            return f"{settings.COLLECTION_NAME}_{tenant_id}"
-        return settings.COLLECTION_NAME
+            return f"{base}_{tenant_id}"
+        # Global has no partition key, so no trailing "_".
+        return base
 
     def get_or_create_collection(self, user_id: str, tenant_id: str) -> Chroma:
         collection_name = self._collection_name(user_id, tenant_id)

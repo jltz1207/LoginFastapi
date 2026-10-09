@@ -335,13 +335,44 @@ Phase 4 只處理問題 B（每個測試後 `cache_clear()`）；問題 A 只寫
 
 ## Phase 5：collection 名稱帶 embedding 版本
 
+> **狀態：✅ 程式完成（2026-10-09，未 commit）；資料遷移未執行。** 測試 30 passed（Phase 3 後的 24 + 新增 6）。
+>
+> - `app/core/config.py` 新增 `EMBEDDING_VERSION = "v1"`；`_collection_name()` 依下方對照表產生名稱。
+> - `scripts/migrate_collection_names.py`：預設 dry run，`--apply` 才寫入；用 `upsert` 依 id 複製（可重跑），複製後比對筆數，舊 collection 保留。
+>   以 `python -m scripts.migrate_collection_names` 從 repo 根目錄執行。
+> - **與原計劃的差異**：跳過規則改成「partition key 以任何 `v<數字>` 開頭就跳過」，不只是目前的版本——否則日後 `EMBEDDING_VERSION=v2` 時，腳本會把 `{NAME}_v1_x` 誤改成 `{NAME}_v2_v1_x`。
+>   另外加了路徑檢查：`PersistentClient` 遇到不存在的目錄會自動建立，第一次 dry run 就因此在 repo 根目錄建出一個空的 `chroma_data/`（已刪除）；現在路徑不存在會直接報錯。
+> - **本機 dry run 結果**：repo 根目錄沒有 `chroma_data/`（`CHROMA_PERSIST_DIRECTORY=./chroma_data`），沒有可遷移的資料。真正有資料的環境（例如正式環境）要在**部署前**先跑 dry run 確認清單，再 `--apply`。
+
 **問題**：換 `EMBEDDING_MODEL` / `EMBEDDING_PROVIDE_TYPE` 後，新舊維度的向量會寫進同一個 collection，搜尋結果靜默劣化。
 
 **改動**
 
 1. `app/core/config.py` 新增 `EMBEDDING_VERSION: str = "v1"`——用手動遞增的版本號，而不是從 model 名稱自動推導，避免同一個 model 的設定微調（例如 `task_type`）被漏掉，也避免 collection 名稱過長或含非法字元。
-2. `_collection_name()` 回傳 `f"{settings.COLLECTION_NAME}_{settings.EMBEDDING_VERSION}_{partition_key}"`。
-3. **遷移**：新增 `scripts/migrate_collection_names.py`，把既有 `{COLLECTION_NAME}_{key}` 複製到 `{COLLECTION_NAME}_v1_{key}`（同一 embedding，直接搬 embeddings 與 metadata，不重新計算）。確認資料筆數一致後才切換設定；舊 collection 保留到人工確認後再刪。
+2. `_collection_name()`（`collection_manager.py:39-46`）在 `COLLECTION_NAME` 與 partition key 之間插入版本號。
+
+   **partition key** 是 collection 名稱裡「依分區策略而變」的那一段，也就是用來切 collection 的 id；程式碼裡沒有叫這個名字的變數，它就是 `_collection_name()` 各分支用的值：
+
+   | `PARTITION_METHOD` | 策略 | partition key | 現在的 collection 名 | Phase 5 之後 |
+   |---|---|---|---|---|
+   | 1 | `GLOBAL_COLLECTION` | （沒有） | `{NAME}` | `{NAME}_v1` |
+   | 2 | `ONE_USER_ONE_COLLECTION`（預設） | `user_id` | `{NAME}_{user_id}` | `{NAME}_v1_{user_id}` |
+   | 3 | `ONE_TENANT_ONE_COLLECTION` | `tenant_id` | `{NAME}_{tenant_id}` | `{NAME}_v1_{tenant_id}` |
+
+   （`{NAME}` = `settings.COLLECTION_NAME`，`v1` = `settings.EMBEDDING_VERSION`）
+
+   ```python
+   def _collection_name(self, user_id: str, tenant_id: str) -> str:
+       base = f"{settings.COLLECTION_NAME}_{settings.EMBEDDING_VERSION}"
+       if self.partition_strategy == vector_partition_strategy.ONE_USER_ONE_COLLECTION:
+           return f"{base}_{user_id}"
+       if self.partition_strategy == vector_partition_strategy.ONE_TENANT_ONE_COLLECTION:
+           return f"{base}_{tenant_id}"
+       return base   # global 沒有 partition key，不能留結尾的 "_"
+   ```
+
+   Phase 3 已經把名稱集中在這個函式計算（也同時當 cache key），所以版本號只要加在這一處。
+3. **遷移**：新增 `scripts/migrate_collection_names.py`，依上表把既有 collection 複製到帶版本號的新名稱（`{NAME}` → `{NAME}_v1`、`{NAME}_{key}` → `{NAME}_v1_{key}`；同一 embedding，直接搬 embeddings 與 metadata，不重新計算）。已經是 `{NAME}_v1` 開頭的 collection 要跳過，腳本才能重跑。確認資料筆數一致後才切換設定；舊 collection 保留到人工確認後再刪。
 
 ```mermaid
 sequenceDiagram
@@ -351,16 +382,16 @@ sequenceDiagram
 
     Ops->>Script: 執行（舊程式仍在服務）
     Script->>Chroma: list_collections()
-    loop 每個 {NAME}_{key}
+    loop 每個舊名稱 {NAME} / {NAME}_{key}（跳過已帶版本號的）
         Script->>Chroma: get(include=embeddings, documents, metadatas)
-        Script->>Chroma: {NAME}_v1_{key}.add(...)
+        Script->>Chroma: 對應的 {NAME}_v1 / {NAME}_v1_{key}.add(...)
         Script->>Script: 比對筆數
     end
     Ops->>Ops: 部署含 EMBEDDING_VERSION 的新程式
     Ops->>Chroma: 人工確認後刪除舊 collection
 ```
 
-- 部署到遷移完成之間，新程式會讀到空的 `_v1_` collection——遷移必須在部署**前**完成，期間的新上傳要暫停或重跑腳本補齊。
+- 部署到遷移完成之間，新程式會讀到空的 `_v1` collection——遷移必須在部署**前**完成，期間的新上傳要暫停或重跑腳本補齊。
 - 換 embedding model 時：遞增 `EMBEDDING_VERSION`，用新 model 對原文重新 embed 寫進新 collection（這是另一支腳本，不在這次範圍）。
 
 **驗證**：在本機 `./chroma_data` 的複本上跑腳本，比對新舊 collection 的 `count()` 與抽樣 `get()` 結果；切換後跑一次完整的 upload + chat 流程。
@@ -407,7 +438,8 @@ sequenceDiagram
 | `tests/conftest.py`（新，Phase 4 延後） | 4 |
 | `tests/vectorstore/test_store_indexer_scope.py`（新） | 1 |
 | `tests/vectorstore/test_collection_manager.py`（新） | 3 |
-| `scripts/migrate_collection_names.py`（新，`scripts/` 目錄目前不存在） | 5 |
+| `scripts/migrate_collection_names.py`（新） | 5 |
+| `tests/vectorstore/test_collection_manager.py`、`tests/scripts/test_migrate_collection_names.py`（新） | 5 |
 | `docs/vectorstore/*.md` | 每個 Phase 完成後更新對應段落，並依 `docs/CLAUDE.md` 改檔名日期 |
 
 

@@ -44,7 +44,6 @@ timeline
     2026-09-17 : 7d4fb9d BM25 index 改為 LRU cache
                : 88dbceb get_retriever 改 sync，修 multi-hop 跨租戶外洩
     待辦       : per-tenant 設為預設
-               : collection 名帶 embedding 版本
                : 分區策略改為 per-tenant 屬性
 ```
 
@@ -58,7 +57,7 @@ timeline
 | `chats.py` 的 tenant 佔位換成真值 | ✅ 完成 | `app/api/v1/endpoints/chats.py:42` |
 | 預設改為 per-tenant | ❌ 仍是 `PARTITION_METHOD=2`（per-user） | `app/core/config.py:18` |
 | 分區策略改為 per-tenant 屬性 | ❌ 仍是全域 env var | `app/core/config.py:18` |
-| collection 名帶 embedding 版本 | ❌ 未做 | `collection_manager.py:39-46`（`_collection_name()`） |
+| collection 名帶 embedding 版本 | ✅ 完成（2026-10-09） | `collection_manager.py:39-49`（`_collection_name()`）、`config.py:23` |
 | `where` 組裝收斂成單一守門函式 | ✅ 完成（2026-10-09） | `StoreIndexer.scope_filter()`，`StoreIndexer.py:11-21` |
 
 ---
@@ -72,9 +71,9 @@ flowchart LR
     end
     subgraph Collection["Collection_manager.get_or_create_collection()"]
         S{"PARTITION_METHOD"}
-        S -->|1| G["{COLLECTION_NAME}"]
-        S -->|"2 (預設)"| PU["{COLLECTION_NAME}_{user_id}"]
-        S -->|3| PT["{COLLECTION_NAME}_{tenant_id}"]
+        S -->|1| G["{COLLECTION_NAME}_{EMBEDDING_VERSION}"]
+        S -->|"2 (預設)"| PU["{COLLECTION_NAME}_{EMBEDDING_VERSION}_{user_id}"]
+        S -->|3| PT["{COLLECTION_NAME}_{EMBEDDING_VERSION}_{tenant_id}"]
     end
     subgraph Query["檢索端：三層 $and filter"]
         D["dense<br/>StoreIndexer.get_dense_retriever()"]
@@ -126,24 +125,25 @@ flowchart TD
 ### 切換到 per-tenant 的剩餘工作
 
 因為三層 filter 已經完成，切換本身只是改設定：`PARTITION_METHOD=3`。真正要處理的是**既有資料的遷移**——
-現有 chunk 都在 `{COLLECTION_NAME}_{user_id}` 裡，改設定後新 collection 是空的。需要一支一次性腳本把各 user collection 的資料搬到所屬 tenant 的 collection（推論，尚未實作與驗證）。
+現有 chunk 都在 `{COLLECTION_NAME}_{EMBEDDING_VERSION}_{user_id}` 裡，改設定後新 collection 是空的。需要一支一次性腳本把各 user collection 的資料搬到所屬 tenant 的 collection（推論，尚未實作與驗證）。
 
 ---
 
 ## 兩個實務細節
 
-### 1. collection 名字要帶 embedding 版本（未做）
+### 1. collection 名字帶 embedding 版本（2026-10-09 完成，計劃 Phase 5）
 
-現在的名字是 `{COLLECTION_NAME}` / `_{user_id}` / `_{tenant_id}`（`collection_manager.py:39-46` 的 `_collection_name()`；Phase 3 之後名稱只在這裡算，加版本號只要改這一處）。
-哪天改 `EMBEDDING_MODEL` 或 `EMBEDDING_PROVIDE_TYPE`（`app/core/config.py:15,19`），新舊維度的向量會混進同一個 collection，**搜尋結果靜默劣化而不會報錯**。
+改 `EMBEDDING_MODEL` 或 `EMBEDDING_PROVIDE_TYPE` 時，新舊維度的向量若寫進同一個 collection，**搜尋結果會靜默劣化而不會報錯**。
+現在 `_collection_name()`（`app/vectorstore/collection_manager.py:39-49`）在 `COLLECTION_NAME` 與 partition key 之間插入 `settings.EMBEDDING_VERSION`（預設 `"v1"`，`app/core/config.py:23`）：
 
-建議：
+| 策略 | collection 名 |
+|---|---|
+| 1 `GLOBAL_COLLECTION` | `{NAME}_v1` |
+| 2 `ONE_USER_ONE_COLLECTION` | `{NAME}_v1_{user_id}` |
+| 3 `ONE_TENANT_ONE_COLLECTION` | `{NAME}_v1_{tenant_id}` |
 
-```python
-collection_name = f'{settings.COLLECTION_NAME}_v{embed_version}_{partition_key}'
-```
-
-換模型時新舊並存，可以逐個 tenant 遷移。
+換模型時遞增 `EMBEDDING_VERSION`，新舊 collection 並存，可以逐個 tenant 遷移。
+既有的無版本 collection 要用 `scripts/migrate_collection_names.py` 複製到新名稱（見計劃 Phase 5）。
 
 ### 2. BM25 那條路會被分區策略放大（已緩解）
 

@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     COLLECTION_NAME:str = "user_knowledge_base"
     PARTITION_METHOD: int = 2  # 1 = GLOBAL_COLLECTION, 2 = ONE_USER_ONE_COLLECTION
     EMBEDDING_PROVIDE_TYPE:str ="GEMINI"
+    # Part of every collection name. Bump it whenever EMBEDDING_MODEL / EMBEDDING_PROVIDE_TYPE
+    # (or anything else that changes the vectors) changes, so old and new vectors never share
+    # a collection. Existing data must be migrated: see scripts/migrate_collection_names.py.
+    EMBEDDING_VERSION: str = "v1"
 
     # LLM
     LLM_PROVIDER_TYPE: str = "GEMINI"

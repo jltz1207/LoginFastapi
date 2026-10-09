@@ -168,7 +168,7 @@ classDiagram
 
 - **兩個 singleton 入口**：`get_vector_store_indexer()` 和 `get_chroma_db()`，都是 `lru_cache`，所以整個 process 只有一個 `StoreIndexer`、一個 `Collection_manager`、一個 `PersistentClient`。
 - **`Chroma` wrapper 有多個、`PersistentClient` 只有一個**：每個 wrapper 都共用同一個 client 與 embedding function，只差在指向哪個 collection。
-- **cache 的 key 與實際 collection 不是 1:1**：key 是 `{COLLECTION_NAME}_{user_id}_{tenant_id}`，實際名稱由 `vector_partition_strategy` 決定；策略 1 / 3 下多個 wrapper 會指到同一個 `Collection`。
+- **cache 的 key 就是實際 collection 名稱**（Phase 3 起）：由 `_collection_name()` 依 `vector_partition_strategy` 與 `EMBEDDING_VERSION` 算出，一個實體 `Collection` 只對應一個 `Chroma` handle。
 - 外部有兩個進入點：
   - 走 `StoreIndexer` 的方法：ingestion（`add_documents`）、BM25 loader（`get_all_documents_in_kb`）。
   - dense 檢索：`get_dense_retriever()`，由 `HybridRetriever`、`BasicRetriever`、`pipelines.py` 直接呼叫（`hybrid_retriever.py:28`、`basic_retriever.py:11`）。
@@ -191,7 +191,7 @@ flowchart LR
     C --> C3["lru_cache singleton = 隱藏全域狀態"]
     C --> C4["✅ 已修正：sync 寫入卡住 event loop"]
     C --> C5["PersistentClient 綁單機"]
-    C --> C6["collection 名無 embedding 版本"]
+    C --> C6["✅ 已修正：collection 名無 embedding 版本"]
 
     classDef pro fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef con fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
@@ -224,7 +224,7 @@ flowchart LR
    （檢索端本來就沒有這個問題：dense 走 `ainvoke`，BM25 由 `BaseRetriever` 丟進 executor。）
 5. **`PersistentClient` 綁單機。** 資料存在本機 `./chroma_data`，多台機器無法共用；多個 worker process 同時開同一個目錄的安全性未查證（推論：chromadb 官方建議多 process 情境改用 client/server 模式 `HttpClient`）。
    要擴展時得換成 `chromadb.HttpClient`，所幸 `Collection_manager` 已支援注入 client，換的範圍只在 `client.py`。
-6. **collection 名字沒有 embedding 版本。** 換 embedding model 後新舊向量會混在同一個 collection，搜尋結果靜默劣化。
+6. ~~**collection 名字沒有 embedding 版本。**~~ **已修正（2026-10-09，計劃 Phase 5）。** 名稱加入 `EMBEDDING_VERSION`，換 model 時遞增版本即可讓新舊向量分開；既有資料用 `scripts/migrate_collection_names.py` 遷移。
 7. **小問題。** `StoreIndexer.retrieve()` 是死碼；命名風格不一致（`Chroma_db`、`Collection_manager`、檔名 `StoreIndexer.py`）。
 
 ### `client.py`
@@ -240,9 +240,9 @@ flowchart LR
 
 | 值 | 策略 | collection 名 |
 |---|---|---|
-| 1 | `GLOBAL_COLLECTION` | `{COLLECTION_NAME}` |
-| 2 | `ONE_USER_ONE_COLLECTION`（預設） | `{COLLECTION_NAME}_{user_id}` |
-| 3 | `ONE_TENANT_ONE_COLLECTION` | `{COLLECTION_NAME}_{tenant_id}` |
+| 1 | `GLOBAL_COLLECTION` | `{COLLECTION_NAME}_{EMBEDDING_VERSION}` |
+| 2 | `ONE_USER_ONE_COLLECTION`（預設） | `{COLLECTION_NAME}_{EMBEDDING_VERSION}_{user_id}` |
+| 3 | `ONE_TENANT_ONE_COLLECTION` | `{COLLECTION_NAME}_{EMBEDDING_VERSION}_{tenant_id}` |
 
 `get_or_create_collection(user_id, tenant_id)` 回傳的是 **LangChain 的 `Chroma` wrapper**（不是原生 chromadb collection），
 embedding function 來自 `EmbeddingFactory`。

@@ -30,7 +30,7 @@ def test_per_tenant_users_share_one_handle():
     second = manager.get_or_create_collection(user_id="u2", tenant_id="t1")
 
     assert first is second
-    assert first._collection.name == f"{settings.COLLECTION_NAME}_t1"
+    assert first._collection.name == f"{settings.COLLECTION_NAME}_{settings.EMBEDDING_VERSION}_t1"
 
 
 def test_global_collection_is_one_handle_for_everyone():
@@ -40,7 +40,7 @@ def test_global_collection_is_one_handle_for_everyone():
     second = manager.get_or_create_collection(user_id="u2", tenant_id="t2")
 
     assert first is second
-    assert first._collection.name == settings.COLLECTION_NAME
+    assert first._collection.name == f"{settings.COLLECTION_NAME}_{settings.EMBEDDING_VERSION}"
 
 
 def test_per_user_gives_each_user_its_own_handle():
@@ -50,7 +50,7 @@ def test_per_user_gives_each_user_its_own_handle():
     second = manager.get_or_create_collection(user_id="u2", tenant_id="t1")
 
     assert first is not second
-    assert first._collection.name == f"{settings.COLLECTION_NAME}_u1"
+    assert first._collection.name == f"{settings.COLLECTION_NAME}_{settings.EMBEDDING_VERSION}_u1"
     assert manager.get_or_create_collection(user_id="u1", tenant_id="t1") is first
 
 
@@ -73,3 +73,12 @@ def test_evict_forces_a_fresh_handle():
     manager.evict(user_id="u1", tenant_id="t1")
 
     assert manager.get_or_create_collection(user_id="u1", tenant_id="t1") is not first
+
+
+def test_bumping_embedding_version_moves_to_a_new_collection(monkeypatch):
+    v1 = _manager(vector_partition_strategy.ONE_TENANT_ONE_COLLECTION).get_or_create_collection(user_id="u1", tenant_id="t1")
+    monkeypatch.setattr(settings, "EMBEDDING_VERSION", "v2")
+    v2 = _manager(vector_partition_strategy.ONE_TENANT_ONE_COLLECTION).get_or_create_collection(user_id="u1", tenant_id="t1")
+
+    assert v1._collection.name.endswith("_v1_t1")
+    assert v2._collection.name.endswith("_v2_t1")
