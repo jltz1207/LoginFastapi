@@ -16,8 +16,10 @@ class Collection_manager():
             self.embedding_function = EmbeddingFactory.get_embedding_function()
             self.partition_strategy = vector_partition_strategy(settings.PARTITION_METHOD)
             self.cache: dict[str, Chroma] = {}
+
     def _collection_name(self, user_id:str, tenant_id:str) -> str:
          return f"{settings.COLLECTION_NAME}_{user_id}_{tenant_id}"
+    
     def get_or_create_collection(self, user_id:str, tenant_id:str) -> Chroma:
         collection_name = self._collection_name(user_id, tenant_id)
         if collection_name in self.cache:

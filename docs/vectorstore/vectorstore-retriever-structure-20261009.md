@@ -168,7 +168,10 @@ classDiagram
 - **兩個 singleton 入口**：`get_vector_store_indexer()` 和 `get_chroma_db()`，都是 `lru_cache`，所以整個 process 只有一個 `StoreIndexer`、一個 `Collection_manager`、一個 `PersistentClient`。
 - **`Chroma` wrapper 有多個、`PersistentClient` 只有一個**：每個 wrapper 都共用同一個 client 與 embedding function，只差在指向哪個 collection。
 - **cache 的 key 與實際 collection 不是 1:1**：key 是 `{COLLECTION_NAME}_{user_id}_{tenant_id}`，實際名稱由 `vector_partition_strategy` 決定；策略 1 / 3 下多個 wrapper 會指到同一個 `Collection`。
-- 外部只透過 `StoreIndexer`（ingestion、BM25 loader）和 `get_vector_store_indexer().collection_manager`（dense，`app/rag/retriever/common.py:5-6`）進入這一層。
+- 外部有兩個進入點：
+  - 走 `StoreIndexer` 的方法：ingestion（`add_documents`）、BM25 loader（`get_all_documents_in_kb`）。
+  - 透過 `StoreIndexer` 取 `collection_manager` 再自己組 filter：只有 `get_collection_retriever()`（`app/rag/retriever/common.py:5-14`）。
+    `HybridRetriever` / `BasicRetriever` 本身**沒有**這行，它們是透過呼叫 `get_collection_retriever()` 間接用到（`hybrid_retriever.py:28`、`basic_retriever.py:11`）。
 
 ### 這個結構的優缺點
 
@@ -183,7 +186,7 @@ flowchart LR
     P --> P3["query path 與分區策略解耦"]
     P --> P4["handle cache 省掉重複建構"]
     P --> P5["client 可注入，易測試"]
-    C --> C1["facade 有破口，filter 重複兩處"]
+    C --> C1["三層 filter 寫了兩份，一份在 vector store 層外"]
     C --> C2["cache 無上限、key 與 collection 不對齊"]
     C --> C3["lru_cache singleton = 隱藏全域狀態"]
     C --> C4["sync 寫入卡住 event loop"]
@@ -206,8 +209,39 @@ flowchart LR
 
 **缺點**
 
-1. **facade 有破口，filter 邏輯重複。** `StoreIndexer` 本意是唯一入口，但 dense 那條路直接拿 `get_vector_store_indexer().collection_manager`（`common.py:5-6`）繞過它；
-   三層 `where` 也在 `common.py:7-14` 與 `StoreIndexer.py:26-30` 各寫一份。兩處只要有一處漏改，sparse 與 dense 的隔離範圍就會不一致——這正是 `get_all_documents_in_kb()` 註解在防的事。
+1. **三層 tenant filter 寫了兩份，其中一份在 vector store 層之外。**
+
+   | 路徑 | filter 在哪組 |
+   |---|---|
+   | sparse（BM25） | `StoreIndexer.get_all_documents_in_kb()`，`StoreIndexer.py:26-30` |
+   | dense | `get_collection_retriever()`，`common.py:7-14` |
+
+   兩份現在內容一致，但沒有任何機制保證以後也一致：例如加一個 `{"deleted": False}` 條件卻只改到一份，sparse 與 dense 看到的文件範圍就會不同，
+   而且不會 raise，只會靜默多回或少回文件——這正是 `get_all_documents_in_kb()` 註解在防的事。
+   另外，dense 的 filter 是在 `app/rag/retriever/` 組的，vector store 層本身無法保證「讀出來的東西一定經過三層 filter」；
+   任何新程式只要拿到 `collection_manager`，就能不帶 filter 直接查。
+
+   收斂方向：把 filter 組裝搬進 `StoreIndexer`，兩條路都呼叫同一個函式。
+
+   ```python
+   class StoreIndexer:
+       @staticmethod
+       def scope_filter(tenant_id: str, user_id: str, kb_id: str) -> dict:
+           return {"$and": [
+               {"knowledge_base_id": kb_id},
+               {"user_id": user_id},
+               {"tenant_id": tenant_id},
+           ]}
+
+       def get_dense_retriever(self, tenant_id, user_id, kb_id, *, top_k=8, search_type="similarity"):
+           collection = self.collection_manager.get_or_create_collection(user_id=user_id, tenant_id=tenant_id)
+           return collection.as_retriever(
+               search_type=search_type,
+               search_kwargs={"k": top_k, "filter": self.scope_filter(tenant_id, user_id, kb_id)},
+           )
+   ```
+
+   這樣 filter 只剩一份，`get_collection_retriever()` 也不需要再取 `collection_manager`（此為建議寫法，尚未實作）。
 2. **cache 無上限，key 與實際 collection 不對齊。** 裸 `dict` 隨 `(user_id, tenant_id)` 組合無限成長；策略 1 / 3 下多個 key 各包一個 wrapper 指向同一個 collection。
 3. **`lru_cache` singleton 是隱藏的全域狀態。** `PARTITION_METHOD`、embedding 設定在第一次呼叫時就被凍結，改設定必須重啟 process；測試之間也要記得 `cache_clear()`，否則會互相污染（目前 `tests/` 裡沒有任何 `cache_clear()` 呼叫）。
 4. **sync 寫入卡住 event loop。** `uploadDocument` 是 `async def`（`knowledgeBases.py:55`），卻直接同步呼叫 `store.add_documents()`——裡面包含呼叫 embedding API 與寫 SQLite，執行期間整個 FastAPI process 無法處理其他 request。
