@@ -2,9 +2,9 @@
 
 ## Context
 
-`app/routing/branches/lookup.py`（在 [`integrate-searching-rag-into-lookup.md`](./integrate-searching-rag-into-lookup.md) 那份計劃裡會被刪除）裡有一組其實設計得不錯、只是接錯基礎設施的元件：`HybridRetriever`/`ChromaHybridRetriever`（Protocol + 實作）跟 `Reranker`/`PassthroughReranker`。問題是它自己 `import chromadb; chromadb.Client()` 開一個全新、非持久化的 in-memory client，跟 `app/vectorstore/collection_manager.py` 的 `Collection_manager`（`app/rag/retriever.py` 現有的 `get_collection_retriever()` 已經在正確用）完全脫節，查不到真正 ingest 進去的資料。
+`app/routing/branches/lookup.py`（在 [`integrate-searching-rag-into-lookup-20260827.md`](./integrate-searching-rag-into-lookup-20260827.md) 那份計劃裡會被刪除）裡有一組其實設計得不錯、只是接錯基礎設施的元件：`HybridRetriever`/`ChromaHybridRetriever`（Protocol + 實作）跟 `Reranker`/`PassthroughReranker`。問題是它自己 `import chromadb; chromadb.Client()` 開一個全新、非持久化的 in-memory client，跟 `app/vectorstore/collection_manager.py` 的 `Collection_manager`（`app/rag/retriever.py` 現有的 `get_collection_retriever()` 已經在正確用）完全脫節，查不到真正 ingest 進去的資料。
 
-現況 `app/rag/retriever.py` 只有一個裸函式 `get_collection_retriever(user_id, search_type, search_kwags)`，回傳 LangChain 的 `VectorStoreRetriever`，沒有 rerank 這一步。這次要做的：把「檢索 + rerank」這個能力正式做成 `app/rag/` 底下的可重用 class（用 `Collection_manager` 接正確的持久化 Chroma client），取代 `branches/lookup.py` 裡那組跑不到真資料的版本，也讓 `app/routing/branches/multi_hop.py` 現在同樣打裸 `chromadb.Client()` 的 `ChromaHopRetriever` 有東西可以換掉——這正好是[整合 LOOKUP 那份計劃](./integrate-searching-rag-into-lookup.md)裡明確列為「這次不做」、留給之後處理的兩個問題之一。
+現況 `app/rag/retriever.py` 只有一個裸函式 `get_collection_retriever(user_id, search_type, search_kwags)`，回傳 LangChain 的 `VectorStoreRetriever`，沒有 rerank 這一步。這次要做的：把「檢索 + rerank」這個能力正式做成 `app/rag/` 底下的可重用 class（用 `Collection_manager` 接正確的持久化 Chroma client），取代 `branches/lookup.py` 裡那組跑不到真資料的版本，也讓 `app/routing/branches/multi_hop.py` 現在同樣打裸 `chromadb.Client()` 的 `ChromaHopRetriever` 有東西可以換掉——這正好是[整合 LOOKUP 那份計劃](./integrate-searching-rag-into-lookup-20260827.md)裡明確列為「這次不做」、留給之後處理的兩個問題之一。
 
 依賴：`multi_hop.py` 這邊的改動要讀 `state.user_id`（`Collection_manager.get_or_create_collection()` 是照 `user_id` 分 collection），這個欄位要等 LOOKUP 那份計劃把 `RoutedAgentState` 改成繼承 `AgentState`、`branches/*.py` 改成 attribute 存取之後才自然拿得到；順序上建議先做完 LOOKUP 整合，再做這份。
 

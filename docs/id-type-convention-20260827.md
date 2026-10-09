@@ -81,7 +81,7 @@ Collection name 那條路徑反而不會爆，因為 `f"{uuid_obj}"` 跟 `str(uu
 2. **`app/agent/state.py:22-33` 的 `RoutedAgentState`**
    目前是獨立的 pydantic class，欄位為 `tenant_id: str` / `knowledge_base_id: str`（且引用了未 import 的 `ConversationTurn`，是壞的）。
    應改成 `class RoutedAgentState(AgentState)`，繼承回 `UUID` 型別；接縫則落在呼叫各 branch 的地方 `str()` 一次。
-   → 詳見 `docs/plans/integrate-searching-rag-into-lookup.md`。
+   → 詳見 `docs/plans/integrate-searching-rag-into-lookup-20260827.md`。
 
 ## 檢查清單（寫新 code 時）
 

@@ -50,7 +50,7 @@ self.retriever = BasicRetriever().get_retriever(...)   # 缺 await
 `BasicRetriever.get_retriever` 是 `async def`（`app/rag/retriever/basic_retriever.py:8`），
 不 `await` 拿到的是 coroutine object，接著 `:125` 對它呼叫 `.ainvoke()` 會再炸一次。
 
-> 這是同一類 bug 的第二次出現——`docs/vectorstore/vectorstore-collection-partitioning.md`
+> 這是同一類 bug 的第二次出現——`docs/vectorstore/vectorstore-collection-partitioning-20261009.md`
 > 結尾記過 `app/agent/nodes/retrieval.py` 的同款漏 `await`（那個已修）。
 
 > **「那乾脆把 `async` 刪掉？」** 這個問題值得認真回答——`get_retriever` 只是組裝 pipeline，
@@ -106,7 +106,7 @@ pipeline、不是真的 invoke，它為什麼要是 `async`？** 這個質疑是
 ### 結論：`async` 是症狀，不是病因
 
 `async` 之所以看起來必要，只是因為 `HybridRetriever` 把「建 BM25 index」塞進了 builder。
-而那件事本來就不該待在那裡——`docs/vectorstore/vectorstore-collection-partitioning.md`
+而那件事本來就不該待在那裡——`docs/vectorstore/vectorstore-collection-partitioning-20261009.md`
 已經記過同一個問題：
 
 > 每個 request 都把整個 KB 的 chunk 全部載進記憶體建 BM25 index，沒有任何 cache……

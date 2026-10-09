@@ -60,7 +60,7 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
   try:
     # Chroma metadata values must be str/int/float/bool — a UUID object is rejected,
     # and a UUID that slips into a `where` filter matches nothing without raising.
-    # See docs/id-type-convention.md.
+    # See docs/id-type-convention-20260827.md.
     metadata = {
       "knowledge_base_id": str(knowledge_base_id),
       "user_id": str(current_user.id),

@@ -68,7 +68,7 @@ get_all_documents_in_kb     + kind=chunk
 fetch_document_summaries    + kind=summary
 ```
 
-漏掉任何一處都是**靜默污染**，沒有錯誤訊息 —— 跟 `docs/id-type-convention.md` 講的 UUID 進 `where` filter 是同一類最難追的 bug。SQL 方案動不到任何既有 filter。
+漏掉任何一處都是**靜默污染**，沒有錯誤訊息 —— 跟 `docs/id-type-convention-20260827.md` 講的 UUID 進 `where` filter 是同一類最難追的 bug。SQL 方案動不到任何既有 filter。
 
 ---
 
@@ -96,7 +96,7 @@ tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False,
 summary:   Mapped[Optional[str]] = mapped_column(Text, nullable=True)   # null = 還沒算好
 ```
 
-`tenant_id` 是 `0a3180c` 的遺留缺口 —— 當時只加了 `users.tenant_id`，走 SQL 撈摘要需要它才能對齊三層邊界（見 `docs/vectorstore-collection-partitioning.md`）。
+`tenant_id` 是 `0a3180c` 的遺留缺口 —— 當時只加了 `users.tenant_id`，走 SQL 撈摘要需要它才能對齊三層邊界（見 `docs/vectorstore-collection-partitioning-20261009.md`）。
 
 `global_summary.py:28` 的 `SummaryIndexClient` Protocol **保留** —— 它存在的目的就是讓儲存後端可抽換，換成 Postgres 實作正是它發揮作用的時候。`app/routing/branches/metadata.py:21` 已有 routing 層直接用 `AsyncSessionLocal` 的先例。
 
