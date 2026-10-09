@@ -45,15 +45,12 @@ def test_scope_filter_covers_all_three_ids():
     ]}
 
 
-def test_extra_filter_is_appended_not_substituted():
+def test_dense_retriever_uses_scope_filter_and_top_k():
     indexer = StoreIndexer(collection_manager=_SharedCollectionManager())
 
-    retriever = indexer.get_dense_retriever("t", "u", "kb", top_k=3, extra_filter={"source": "a.pdf"})
+    retriever = indexer.get_dense_retriever("t", "u", "kb", top_k=3)
 
-    conditions = retriever.search_kwargs["filter"]["$and"]
-    assert conditions[:3] == StoreIndexer.scope_filter("t", "u", "kb")["$and"]
-    assert conditions[3] == {"source": "a.pdf"}
-    assert retriever.search_kwargs["k"] == 3
+    assert retriever.search_kwargs == {"k": 3, "filter": StoreIndexer.scope_filter("t", "u", "kb")}
 
 
 def test_dense_and_sparse_paths_see_the_same_scope():

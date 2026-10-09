@@ -51,8 +51,8 @@ timeline
 | 落地步驟 | 狀態 | 位置 |
 |---|---|---|
 | ingestion 寫入三個 metadata key | ✅ 完成 | `app/api/v1/endpoints/knowledgeBases.py:64-68` |
-| dense 檢索三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:32-50` |
-| BM25 loader 三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:52-59` |
+| dense 檢索三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:32-48` |
+| BM25 loader 三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:50-57` |
 | DB 加 `tenant_id`（users / KB / documents） | ✅ 完成 | `app/models/user.py:21`、`asistantKnowledgeBase.py:28`、`document.py:42` |
 | `ONE_TENANT_ONE_COLLECTION` 策略 | ✅ 完成（但非預設） | `app/vectorstore/collection_manager.py:11` |
 | `chats.py` 的 tenant 佔位換成真值 | ✅ 完成 | `app/api/v1/endpoints/chats.py:42` |

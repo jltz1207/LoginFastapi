@@ -210,7 +210,7 @@ flowchart LR
 1. ~~**三層 tenant filter 寫了兩份，其中一份在 vector store 層之外。**~~ **已修正（2026-10-09，計劃 Phase 1）。**
    原本 dense 的 filter 在 `app/rag/retriever/common.py` 的 `get_collection_retriever()` 組，BM25 的在 `StoreIndexer.get_all_documents_in_kb()` 組，兩份各自維護。
    現在 `get_collection_retriever()` 已刪除，兩條路都經過 `StoreIndexer.scope_filter()`（`StoreIndexer.py:11-21`），
-   外部拿 dense 檢索改呼叫 `StoreIndexer.get_dense_retriever()`（`:32-50`），不必再自己取 `collection_manager`。
+   外部拿 dense 檢索改呼叫 `StoreIndexer.get_dense_retriever()`（`:32-48`），不必再自己取 `collection_manager`。
    `tests/vectorstore/test_store_indexer_scope.py` 用共用 collection（最壞情況）驗證 dense 與 sparse 看到的範圍一致、跨 tenant 看不到。
 2. **cache 無上限，key 與實際 collection 不對齊。** 裸 `dict` 隨 `(user_id, tenant_id)` 組合無限成長；策略 1 / 3 下多個 key 各包一個 wrapper 指向同一個 collection。
 3. **`lru_cache` singleton 是隱藏的全域狀態。** `PARTITION_METHOD`、embedding 設定在第一次呼叫時就被凍結，改設定必須重啟 process；測試之間也要記得 `cache_clear()`，否則會互相污染（目前 `tests/` 裡沒有任何 `cache_clear()` 呼叫）。
@@ -256,7 +256,7 @@ StoreIndexer 是被設計成唯一入口（add_documents / retrieve / get_all_do
 
 - `add_documents()`（`StoreIndexer.py:23-26`）：把 caller 傳的 metadata 用 `metadata | doc.metadata` 合併進每個 chunk 後寫入。
 - `retrieve()`（`StoreIndexer.py:28-30`，舊名 `query()`）：空殼，只寫了 `user_collection.query` 沒有呼叫，是死碼。
-- `get_all_documents_in_kb()`（`StoreIndexer.py:52-59`）：`where` 用 `scope_filter()` 同時過濾
+- `get_all_documents_in_kb()`（`StoreIndexer.py:50-57`）：`where` 用 `scope_filter()` 同時過濾
   `knowledge_base_id` / `user_id` / `tenant_id`，現在是 **`BM25IndexProvider` 的 document loader**。
   程式碼裡的註解明確說了理由——dense 那半已經三層都過濾，sparse 這半不補齊的話會洩漏出 dense 看不到的文件。
 
@@ -283,19 +283,18 @@ def get_retriever(self, tenant_id, user_id, knowledge_base_id, top_k: int = 8) -
 ### dense 檢索入口：`StoreIndexer.get_dense_retriever()`
 
 原本在 `common.py` 的 `get_collection_retriever()` 已搬進 `StoreIndexer`（計劃 Phase 1），`common.py` 只剩 `format_doc_to_string()` 給 legacy LCEL path 用。
-dense 檢索現在由 `StoreIndexer.get_dense_retriever()`（`app/vectorstore/StoreIndexer.py:32-50`）提供，**租戶邊界在 `scope_filter()` 一處 enforce**：
+dense 檢索現在由 `StoreIndexer.get_dense_retriever()`（`app/vectorstore/StoreIndexer.py:32-48`）提供，**租戶邊界在 `scope_filter()` 一處 enforce**：
 
 ```python
-where = self.scope_filter(tenant_id, user_id, knowledge_base_id)   # $and: kb / user / tenant
-if extra_filter:
-    where = {"$and": [*where["$and"], extra_filter]}               # 只能附加，不能取代
 return collection.as_retriever(
     search_type=search_type,
-    search_kwargs={"k": top_k, "filter": where},
+    search_kwargs={"k": top_k, "filter": self.scope_filter(tenant_id, user_id, knowledge_base_id)},
 )
 ```
 
-`search_type` 可切 `similarity` / `mmr`。
+`search_type` 可切 `similarity` / `mmr`。**刻意不支援額外 filter**（原本的 `extra_filter` 已於 2026-10-09 移除）：
+`HybridRetriever` 的 BM25 那半是每個 `(tenant, user, kb)` 快取一份整個 KB 的 index，套不上額外條件；
+只給 dense 加 filter 會讓兩半的範圍不一致。之後若需要「只查某份文件」，要連同 BM25 的事後過濾一起做。
 
 ### `basic_retriever.py`
 
@@ -448,7 +447,7 @@ flowchart LR
 
 1. **`chunk_id` 在 agent path 永遠是 `None`。** `FlashrankReranker._rerank_sync()` 重新建 `Document(page_content, metadata)`
    時沒帶 `id`（`reranker.py:90-94`），`retrieval.py:18` 的 `doc.id` 因此全是 `None`。
-   就算不經 rerank，BM25 那半也拿不到 id：`get_all_documents_in_kb()` 建 `Document` 時沒用 `raw["ids"]`（`StoreIndexer.py:58`）。
+   就算不經 rerank，BM25 那半也拿不到 id：`get_all_documents_in_kb()` 建 `Document` 時沒用 `raw["ids"]`（`StoreIndexer.py:56`）。
 2. **rerank 只重排、不篩選。** agent path 的 `HybridRetriever` `top_k=4` 截斷後才送 reranker，reranker 也收斂到 4——
    cross-encoder 只能在 4 筆裡重排序，和 `FlashrankReranker` docstring 建議的「retriever 寬撈 8、reranker 收斂到 4」不符。
 3. **BM25 cache 只存在單一 process。** 多 worker 部署時 `invalidate()` 只打得到收到 upload 的那個 worker，

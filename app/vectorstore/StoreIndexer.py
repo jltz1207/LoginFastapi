@@ -37,16 +37,14 @@ class StoreIndexer:
         *,
         top_k: int = 8,
         search_type: str = "similarity",
-        extra_filter: dict | None = None,
     ) -> VectorStoreRetriever:
+        # No extra filter on purpose: the BM25 half of HybridRetriever caches one index
+        # per scope and cannot apply it, so a dense-only filter would make the two halves
+        # disagree. Add one only together with BM25 support.
         user_collection = self.collection_manager.get_or_create_collection(user_id=user_id, tenant_id=tenant_id)
-        where = self.scope_filter(tenant_id, user_id, knowledge_base_id)
-        if extra_filter:
-            # Appended, never substituted: extra_filter can only narrow the scope.
-            where = {"$and": [*where["$and"], extra_filter]}
         return user_collection.as_retriever(
             search_type=search_type,
-            search_kwargs={"k": top_k, "filter": where},
+            search_kwargs={"k": top_k, "filter": self.scope_filter(tenant_id, user_id, knowledge_base_id)},
         )
 
     def get_all_documents_in_kb(self, tenant_id: str, user_id: str, kb_id: str) -> list[Document]:

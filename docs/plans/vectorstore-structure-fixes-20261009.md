@@ -98,13 +98,13 @@ flowchart LR
 
    def get_dense_retriever(
        self, tenant_id: str, user_id: str, knowledge_base_id: str, *,
-       top_k: int = 8, search_type: str = "similarity", extra_filter: dict | None = None,
+       top_k: int = 8, search_type: str = "similarity",
    ) -> VectorStoreRetriever:
        collection = self.collection_manager.get_or_create_collection(user_id=user_id, tenant_id=tenant_id)
-       where = self.scope_filter(tenant_id, user_id, knowledge_base_id)
-       if extra_filter:
-           where = {"$and": [*where["$and"], extra_filter]}
-       return collection.as_retriever(search_type=search_type, search_kwargs={"k": top_k, "filter": where})
+       return collection.as_retriever(
+           search_type=search_type,
+           search_kwargs={"k": top_k, "filter": self.scope_filter(tenant_id, user_id, knowledge_base_id)},
+       )
    ```
 
 2. `get_all_documents_in_kb()` 改用 `self.scope_filter(...)`。
@@ -121,13 +121,16 @@ flowchart LR
 4. `tests/rag/test_hybrid_retriever.py:20` 目前 monkeypatch `hybrid_retriever.get_collection_retriever`，要改成 patch `StoreIndexer.get_dense_retriever`
    （或讓 `HybridRetriever` 建構子接受注入的 indexer，跟 `bm25_indexes` 參數同一個模式——建議後者，測試不用 monkeypatch）。
 
-**注意**：`extra_filter` 只能**附加**條件，不能取代三層 filter——`$and` 的串接方式保證這點。
+**`extra_filter` 移除（2026-10-09）**：舊的 `get_collection_retriever()` 有 `extra_filter` 參數，但從未有呼叫端使用，搬移時一度保留，之後決定刪除。
+原因是 `HybridRetriever` 的 BM25 那半每個 `(tenant, user, kb)` 只快取一份整個 KB 的 index，套不上額外條件；只有 dense 支援的話，hybrid 結果會混進範圍外的文件。
+之後若需要「只查某份文件」，要一次做完：`RetrieverFactory.get_retriever()` 加 filter 參數，dense 用 `where`、BM25 對全部文件打分後依 metadata 過濾再取 top_k，兩邊共用同一份 filter 定義。
 
 **驗證**
 
-- 新增 `tests/vectorstore/test_scope_filter.py`：
-  - `scope_filter()` 回傳三個條件且都是 `str`。
-  - `get_dense_retriever(..., extra_filter={...})` 的 `search_kwargs["filter"]["$and"]` 長度為 4，前三個不變。
+- 新增 `tests/vectorstore/test_store_indexer_scope.py`（in-memory Chroma + 假 embedding，模擬共用 collection 的最壞情況）：
+  - `scope_filter()` 回傳三個條件。
+  - `get_dense_retriever()` 的 `search_kwargs` 正好是 `{"k": top_k, "filter": scope_filter(...)}`。
+  - dense 與 sparse 看到的範圍一致；同一個 kb_id 換 tenant 看不到別人的文件。
 - `grep -rn '"\$and"' app/` 只剩 `StoreIndexer.py` 一處；`grep -rn get_collection_retriever app/ tests/` 沒有結果。
 - 現有 `tests/rag/test_hybrid_retriever.py`、`tests/routing/test_multi_hop_isolation.py` 全綠。
 
