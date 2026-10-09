@@ -37,4 +37,4 @@ class HybridRetriever(RetrieverFactory):
             retrievers=[bm25_retriever, dense_retriever],
             weights=self.weights,
         )
-        return ensemble_retriever | RunnableLambda(lambda docs: docs[:top_k])
+        return ensemble_retriever | RunnableLambda(lambda docs: docs[:top_k]) # output: docs array
