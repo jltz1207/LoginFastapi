@@ -43,8 +43,8 @@ timeline
     2026-09-07 : f4ca1d9 Collection_manager 加 handle cache
     2026-09-17 : 7d4fb9d BM25 index 改為 LRU cache
                : 88dbceb get_retriever 改 sync，修 multi-hop 跨租戶外洩
-    待辦       : per-tenant 設為預設
-               : 分區策略改為 per-tenant 屬性
+    2026-10-09 : per-tenant 設為預設（PARTITION_METHOD=3）
+    待辦       : 分區策略改為 per-tenant 屬性
 ```
 
 | 落地步驟 | 狀態 | 位置 |
@@ -53,9 +53,9 @@ timeline
 | dense 檢索三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:28-44` |
 | BM25 loader 三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:46-53` |
 | DB 加 `tenant_id`（users / KB / documents） | ✅ 完成 | `app/models/user.py:21`、`asistantKnowledgeBase.py:28`、`document.py:42` |
-| `ONE_TENANT_ONE_COLLECTION` 策略 | ✅ 完成（但非預設） | `app/vectorstore/collection_manager.py:11` |
+| `ONE_TENANT_ONE_COLLECTION` 策略 | ✅ 完成（2026-10-09 起為預設） | `app/vectorstore/collection_manager.py:11` |
 | `chats.py` 的 tenant 佔位換成真值 | ✅ 完成 | `app/api/v1/endpoints/chats.py:42` |
-| 預設改為 per-tenant | ❌ 仍是 `PARTITION_METHOD=2`（per-user） | `app/core/config.py:18` |
+| 預設改為 per-tenant | ✅ 完成（2026-10-09，`PARTITION_METHOD=3`） | `app/core/config.py:18` |
 | 分區策略改為 per-tenant 屬性 | ❌ 仍是全域 env var | `app/core/config.py:18` |
 | collection 名帶 embedding 版本 | ✅ 完成（2026-10-09） | `collection_manager.py:39-49`（`_collection_name()`）、`config.py:23` |
 | `where` 組裝收斂成單一守門函式 | ✅ 完成（2026-10-09） | `StoreIndexer.scope_filter()`，`StoreIndexer.py:11-21` |
@@ -72,8 +72,8 @@ flowchart LR
     subgraph Collection["Collection_manager.get_or_create_collection()"]
         S{"PARTITION_METHOD"}
         S -->|1| G["{COLLECTION_NAME}_{EMBEDDING_VERSION}"]
-        S -->|"2 (預設)"| PU["{COLLECTION_NAME}_{EMBEDDING_VERSION}_{user_id}"]
-        S -->|3| PT["{COLLECTION_NAME}_{EMBEDDING_VERSION}_{tenant_id}"]
+        S -->|2| PU["{COLLECTION_NAME}_{EMBEDDING_VERSION}_{user_id}"]
+        S -->|"3 (預設)"| PT["{COLLECTION_NAME}_{EMBEDDING_VERSION}_{tenant_id}"]
     end
     subgraph Query["檢索端：三層 $and filter"]
         D["dense<br/>StoreIndexer.get_dense_retriever()"]
@@ -107,7 +107,7 @@ BM25 那半是先把整個 KB 撈回記憶體再建 index，filter 發生在撈�
 | 方案 | collection 數量 | 問題 |
 |---|---|---|
 | per-KB | 使用者數 × KB 數 | 成長最快；KB 是最常被建立 / 刪除的東西，等於一直在建立與摧毀 HNSW index |
-| per-user（**現行預設**） | 使用者數 | 對 to-C 產品無上限。Chroma 每個 collection 是獨立 index，數量到幾千就會開始痛（記憶體、載入時間）。而且 user 不是計費 / 合規邊界 |
+| per-user（2026-10-09 前的預設） | 使用者數 | 對 to-C 產品無上限。Chroma 每個 collection 是獨立 index，數量到幾千就會開始痛（記憶體、載入時間）。而且 user 不是計費 / 合規邊界 |
 | **per-tenant** | 付費組織數 | **有界**；而且它就是真正需要「整包刪掉」的單位 |
 
 per-tenant 的另一個好處是刪除語意：GDPR 整租戶刪除 = drop collection（瞬間），而不是 scan-and-delete by metadata。

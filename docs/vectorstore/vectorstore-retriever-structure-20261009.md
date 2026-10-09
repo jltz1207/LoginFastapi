@@ -239,8 +239,8 @@ flowchart LR
 | 值 | 策略 | collection 名 |
 |---|---|---|
 | 1 | `GLOBAL_COLLECTION` | `{COLLECTION_NAME}_{EMBEDDING_VERSION}` |
-| 2 | `ONE_USER_ONE_COLLECTION`（預設） | `{COLLECTION_NAME}_{EMBEDDING_VERSION}_{user_id}` |
-| 3 | `ONE_TENANT_ONE_COLLECTION` | `{COLLECTION_NAME}_{EMBEDDING_VERSION}_{tenant_id}` |
+| 2 | `ONE_USER_ONE_COLLECTION` | `{COLLECTION_NAME}_{EMBEDDING_VERSION}_{user_id}` |
+| 3 | `ONE_TENANT_ONE_COLLECTION`（預設） | `{COLLECTION_NAME}_{EMBEDDING_VERSION}_{tenant_id}` |
 
 `get_or_create_collection(user_id, tenant_id)` 回傳的是 **LangChain 的 `Chroma` wrapper**（不是原生 chromadb collection），
 embedding function 來自 `EmbeddingFactory`。

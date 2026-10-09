@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "gemini-embedding-001"
     GEMINI_API_KEY:str  =""
     COLLECTION_NAME:str = "user_knowledge_base"
-    PARTITION_METHOD: int = 2  # 1 = GLOBAL_COLLECTION, 2 = ONE_USER_ONE_COLLECTION
+    PARTITION_METHOD: int = 3  # 1 = GLOBAL_COLLECTION, 2 = ONE_USER_ONE_COLLECTION, 3 = ONE_TENANT_ONE_COLLECTION
     EMBEDDING_PROVIDE_TYPE:str ="GEMINI"
     # Part of every collection name. Bump it whenever EMBEDDING_MODEL / EMBEDDING_PROVIDE_TYPE
     # (or anything else that changes the vectors) changes, so old and new vectors never share

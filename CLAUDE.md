@@ -36,7 +36,7 @@ LLM_API_KEY=...
 EMBEDDING_PROVIDE_TYPE=GEMINI
 EMBEDDING_MODEL=gemini-embedding-001
 COLLECTION_NAME=user_knowledge_base
-PARTITION_METHOD=2                 # 1=global collection, 2=one-per-user
+PARTITION_METHOD=3                 # 1=global collection, 2=one-per-user, 3=one-per-tenant
 GRAPH_STRATEGY=2                   # selects which LangGraph to compile
 TAVILY_API_KEY=...
 LANGCHAIN_TRACING_V2=true
@@ -87,8 +87,10 @@ Prompt objects live in `app/rag/prompts/` as module-level constants (e.g. `CONDE
 
 - `get_chroma_db()` — `@lru_cache` singleton `chromadb.PersistentClient`
 - `Collection_manager` — wraps the client; `get_or_create_collection(user_id)` returns a LangChain `Chroma` object using `EmbeddingFactory`
-- `PARTITION_METHOD=2` (default): each user gets their own collection named `{COLLECTION_NAME}_{user_id}`
-- `PARTITION_METHOD=1`: all users share a single global collection; documents are distinguished by `knowledge_base_id` metadata filter
+- `PARTITION_METHOD=3` (default): each tenant gets its own collection named `{COLLECTION_NAME}_{EMBEDDING_VERSION}_{tenant_id}`
+- `PARTITION_METHOD=2`: each user gets their own collection named `{COLLECTION_NAME}_{EMBEDDING_VERSION}_{user_id}`
+- `PARTITION_METHOD=1`: all users share a single global collection `{COLLECTION_NAME}_{EMBEDDING_VERSION}`
+- Under every strategy, isolation is enforced by the tenant / user / kb metadata filter in `StoreIndexer.scope_filter()`, not by the collection name
 
 ### Document Ingestion (`POST /api/v1/knowledgeBases/upload`)
 
