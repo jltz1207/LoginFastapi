@@ -21,7 +21,8 @@ flowchart LR
     CH --> CL["clean_chunks()"]
     CL --> AD["StoreIndexer.add_documents()<br/>metadata: tenant / user / kb"]
     AD --> DB[("Chroma")]
-    AD -->|"同一個 worker thread，finally"| INV["BM25IndexProvider.invalidate(tenant, user, kb)"]
+    AD -->|"同一個 worker thread，finally"| EV["events.notify_kb_changed()"]
+    EV --> INV["BM25IndexProvider.invalidate(tenant, user, kb)"]
 ```
 
 ### Retrieval（agent 主線）
@@ -209,8 +210,8 @@ flowchart LR
 
 1. ~~**三層 tenant filter 寫了兩份，其中一份在 vector store 層之外。**~~ **已修正（2026-10-09，計劃 Phase 1）。**
    原本 dense 的 filter 在 `app/rag/retriever/common.py` 的 `get_collection_retriever()` 組，BM25 的在 `StoreIndexer.get_all_documents_in_kb()` 組，兩份各自維護。
-   現在 `get_collection_retriever()` 已刪除，兩條路都經過 `StoreIndexer.scope_filter()`（`StoreIndexer.py:11-21`），
-   外部拿 dense 檢索改呼叫 `StoreIndexer.get_dense_retriever()`（`:28-44`），不必再自己取 `collection_manager`。
+   現在 `get_collection_retriever()` 已刪除，兩條路都經過 `StoreIndexer.scope_filter()`（`StoreIndexer.py:12-22`），
+   外部拿 dense 檢索改呼叫 `StoreIndexer.get_dense_retriever()`（`:37-53`），不必再自己取 `collection_manager`。
    `tests/vectorstore/test_store_indexer_scope.py` 用共用 collection（最壞情況）驗證 dense 與 sparse 看到的範圍一致、跨 tenant 看不到。
 2. ~~**cache 無上限，key 與實際 collection 不對齊。**~~ **已修正（2026-10-09，計劃 Phase 3）。**
    原本裸 `dict` 隨 `(user_id, tenant_id)` 組合無限成長，策略 1 / 3 下多個 key 各包一個 wrapper 指向同一個 collection。
@@ -218,7 +219,7 @@ flowchart LR
 3. **`lru_cache` singleton 是隱藏的全域狀態。** `PARTITION_METHOD`、embedding 設定在第一次呼叫時就被凍結，改設定必須重啟 process；測試之間也要記得 `cache_clear()`，否則會互相污染（目前 `tests/` 裡沒有任何 `cache_clear()` 呼叫）。
 4. ~~**sync 寫入卡住 event loop。**~~ **已修正（2026-10-09，計劃 Phase 2）。**
    原本 `uploadDocument`（`async def`）直接同步呼叫 `store.add_documents()`，embedding API 呼叫與 SQLite 寫入期間整個 FastAPI process 無法處理其他 request。
-   現在改成 `await asyncio.to_thread(_write_chunks_and_invalidate_bm25, ...)`（`knowledgeBases.py:113`），寫入與 BM25 失效都在 worker thread 上執行。
+   現在改成 `await asyncio.to_thread(store.add_documents, ...)`（`knowledgeBases.py:93-99`），寫入與 BM25 失效通知都在 worker thread 上執行。
    （檢索端本來就沒有這個問題：dense 走 `ainvoke`，BM25 由 `BaseRetriever` 丟進 executor。）
 5. **`PersistentClient` 綁單機。** 資料存在本機 `./chroma_data`，多台機器無法共用；多個 worker process 同時開同一個目錄的安全性未查證（推論：chromadb 官方建議多 process 情境改用 client/server 模式 `HttpClient`）。
    要擴展時得換成 `chromadb.HttpClient`，所幸 `Collection_manager` 已支援注入 client，換的範圍只在 `client.py`。
@@ -259,10 +260,10 @@ StoreIndexer 是 vector store 層唯一的讀寫入口：所有碰 Chroma 的讀
 ```
 四個方法：
 
-- `scope_filter()`（`StoreIndexer.py:11-21`）：tenant / user / kb 三層 `$and` filter 的唯一來源（Phase 1）。
-- `add_documents()`（`StoreIndexer.py:23-26`）：把 caller 傳的 metadata 用 `metadata | doc.metadata` 合併進每個 chunk 後寫入。
-- `get_dense_retriever()`（`StoreIndexer.py:28-44`）：回傳套好 `scope_filter()` 的 dense retriever（Phase 1，取代 `common.py` 的 `get_collection_retriever()`）。
-- `get_all_documents_in_kb()`（`StoreIndexer.py:46-53`）：`where` 用 `scope_filter()` 同時過濾
+- `scope_filter()`（`StoreIndexer.py:12-22`）：tenant / user / kb 三層 `$and` filter 的唯一來源（Phase 1）。
+- `add_documents()`（`StoreIndexer.py:24-35`）：把 caller 傳的 metadata 用 `metadata | doc.metadata` 合併進每個 chunk 後寫入。
+- `get_dense_retriever()`（`StoreIndexer.py:37-53`）：回傳套好 `scope_filter()` 的 dense retriever（Phase 1，取代 `common.py` 的 `get_collection_retriever()`）。
+- `get_all_documents_in_kb()`（`StoreIndexer.py:55-62`）：`where` 用 `scope_filter()` 同時過濾
   `knowledge_base_id` / `user_id` / `tenant_id`，現在是 **`BM25IndexProvider` 的 document loader**。
   程式碼裡的註解明確說了理由——dense 那半已經三層都過濾，sparse 這半不補齊的話會洩漏出 dense 看不到的文件。
 
@@ -289,7 +290,7 @@ def get_retriever(self, tenant_id, user_id, knowledge_base_id, top_k: int = 8) -
 ### dense 檢索入口：`StoreIndexer.get_dense_retriever()`
 
 原本在 `common.py` 的 `get_collection_retriever()` 已搬進 `StoreIndexer`（計劃 Phase 1），`common.py` 只剩 `format_doc_to_string()` 給 legacy LCEL path 用。
-dense 檢索現在由 `StoreIndexer.get_dense_retriever()`（`app/vectorstore/StoreIndexer.py:28-44`）提供，**租戶邊界在 `scope_filter()` 一處 enforce**：
+dense 檢索現在由 `StoreIndexer.get_dense_retriever()`（`app/vectorstore/StoreIndexer.py:37-53`）提供，**租戶邊界在 `scope_filter()` 一處 enforce**：
 
 ```python
 return collection.as_retriever(
@@ -310,18 +311,23 @@ return collection.as_retriever(
 
 ### `bm25_index.py`（新增，commit `7d4fb9d`）
 
-把 BM25 index 建置從 `HybridRetriever.get_retriever()` 抽出來，變成 process 內的 LRU cache。兩個角色：
+把 BM25 index 建置從 `HybridRetriever.get_retriever()` 抽出來，變成 process 內的 LRU cache（2026-10-09 起加上自動失效與 TTL）。兩個角色：
 
-**`BM25IndexProvider`**（`bm25_index.py:42-88`）
+**`BM25IndexProvider`**（`bm25_index.py:50-110`）
 
 - key 是 `(tenant_id, user_id, knowledge_base_id)` 三元組——三個都要，理由同 `get_all_documents_in_kb`。
-- `OrderedDict` 做 LRU，上限 `DEFAULT_MAX_INDEXES = 64`（`:35`）；每個 index 都把整個 KB 的全文放在記憶體，所以必須有界。
-- `None` 也是合法的 cache 值，代表 KB 是空的——`BM25Retriever.from_documents([])` 會 raise（`:71-72`）。
+- `OrderedDict` 做 LRU，上限 `DEFAULT_MAX_INDEXES = 64`（`:40`）；每個 index 都把整個 KB 的全文放在記憶體，所以必須有界。
+- `None` 也是合法的 cache 值，代表 KB 是空的——`BM25Retriever.from_documents([])` 會 raise（`:92-93`）。
 - 用 `threading.Lock` 而非 `asyncio.Lock`：`get()` 跑在 executor thread 上（見下）。
-- 建置在 lock **外**進行（`:67-72`），大 KB 不會卡住其他 KB 的查詢；同 key 的並行 miss 可能各建一次，結果相同，接受這個重工。
-- **generation counter 防 race condition**（`:54`, `:65`, `:74-81`）：`invalidate()` 會把該 key 的 generation +1；
+- 建置在 lock **外**進行（`:87-93`），大 KB 不會卡住其他 KB 的查詢；同 key 的並行 miss 可能各建一次，結果相同，接受這個重工。
+- **generation counter 防 race condition**（`:70`, `:84`, `:96-103`）：`invalidate()` 會把該 key 的 generation +1；
   `get()` 建完後若發現 generation 已變，代表建置期間有寫入，這次結果照樣回給 caller，但**不寫進 cache**。
-- `get_bm25_index_provider()` 是 `lru_cache(maxsize=1)` singleton；建構子可注入 `load_documents`，方便測試。
+- **自動失效**：`get_bm25_index_provider()`（`:112-118`）建立 provider 後呼叫 `on_kb_changed(provider.invalidate)`，
+  之後所有經過 `StoreIndexer` 的寫入都會自動讓對應的 key 失效（見〈Ingestion 端的 metadata 契約與 cache 失效〉）。
+- **TTL 保底**：cache 值是 `(index, built_at)`，超過 `DEFAULT_TTL_SECONDS = 600`（`:43`）視為 miss 重建，
+  處理收不到通知的寫入（其他 process、其他 worker、直接寫 chromadb 的腳本）。`built_at` 在載入**之前**取，index 只會被當成比實際舊。
+  600 秒是推論值，未量測。
+- `get_bm25_index_provider()` 是 `lru_cache(maxsize=1)` singleton；建構子可注入 `load_documents`、`ttl_seconds`、`clock`，方便測試。
 
 `get()` 與 `invalidate()` 交錯時的行為：
 
@@ -329,7 +335,7 @@ return collection.as_retriever(
 sequenceDiagram
     participant Q as get()（executor thread）
     participant P as BM25IndexProvider
-    participant U as upload → invalidate()
+    participant U as 寫入 → notify → invalidate()
 
     Q->>P: lock：miss，記下 generation = g
     Note over Q: lock 外：撈 KB + 建 index
@@ -339,12 +345,12 @@ sequenceDiagram
     Note over P: 下一次 get() 會重新建置，拿到含新寫入的 index
 ```
 
-**`CachedBM25Retriever(BaseRetriever)`**（`bm25_index.py:96-118`）
+**`CachedBM25Retriever(BaseRetriever)`**（`bm25_index.py:121-143`）
 
 - 欄位只有 tenant scope、`k` 和 `provider`，建構零成本。
 - `_get_relevant_documents()` 才呼叫 `provider.get()`。因為只實作了 sync 版本，`ainvoke` 時 `BaseRetriever` 會自動丟進 executor，
   cache miss 的重活就自然離開 event loop——這正是 `get_retriever()` 能改成 sync 的原因。
-- cache 裡的 index 是跨 request 共用的，所以用 `index.model_copy(update={"k": self.k})` 換 `k`，絕不直接改共用物件（`:114-116`）。
+- cache 裡的 index 是跨 request 共用的，所以用 `index.model_copy(update={"k": self.k})` 換 `k`，絕不直接改共用物件（`:139-143`）。
 
 ### `hybrid_retriever.py`
 
@@ -421,7 +427,7 @@ checkpointer 依 `thread_id` 存 state，不重設的話會跨輪累積、幾個
 
 ## Ingestion 端的 metadata 契約與 cache 失效
 
-`app/api/v1/endpoints/knowledgeBases.py:87-91` 在寫入前組出三個 key：
+`app/api/v1/endpoints/knowledgeBases.py:65-69` 在寫入前組出三個 key：
 
 ```python
 metadata = {
@@ -433,31 +439,37 @@ metadata = {
 
 三個值都必須是 `str`——型別錯 Chroma 不會 raise，只會靜默回 0 筆。見 `docs/id-type-convention-20260827.md`。
 
-寫入與失效包在 `_write_chunks_and_invalidate_bm25()`（`knowledgeBases.py:30-49`），由 route 用 `asyncio.to_thread` 丟到 worker thread（`:113`）：
+route 用 `asyncio.to_thread` 把 `store.add_documents(...)` 丟到 worker thread（`knowledgeBases.py:93-99`）；
+BM25 cache 的失效由 `StoreIndexer` 自己負責（2026-10-09 起，見 `docs/plans/finished/bm25-cache-staleness-20261009.md`）：
 
-- 寫入後在 `finally` 裡呼叫 `get_bm25_index_provider().invalidate(...)`：`add_documents` 中途失敗時 Chroma 可能已有部分寫入。
-- 參數直接取自 `metadata`，保證和 BM25 loader 的過濾條件完全一致。
-- **`invalidate()` 放在 thread 裡、而不是 `await` 之後**：request 被取消時，`await` 會立刻丟出 `CancelledError`，但 worker thread 會繼續寫。
+- `StoreIndexer.add_documents()`（`StoreIndexer.py:24-35`）寫入後在 `finally` 裡，對這次寫入涉及的每個 `knowledge_base_id` 呼叫
+  `app/vectorstore/events.py` 的 `notify_kb_changed()`；`BM25IndexProvider` 在建立時用 `on_kb_changed(provider.invalidate)` 註冊。
+  vector store 層因此不必 import BM25（避免循環 import），寫入端也不必記得手動 `invalidate()`。
+- 放 `finally`：`add_documents` 中途失敗時 Chroma 可能已有部分寫入。
+- kb id 取自合併後的 chunk metadata，保證和 BM25 loader 的過濾條件完全一致。
+- **通知在寫入的同一個 thread、寫入之後執行**：request 被取消時，`await` 會立刻丟出 `CancelledError`，但 worker thread 會繼續寫。
   如果失效寫在 `await` 外面的 `finally`，它會比寫入先完成，期間若有 BM25 重建，就會把寫入前的 index 存進 cache（generation counter 擋不住，因為失效已經先發生了）。
 
 ```mermaid
 sequenceDiagram
     participant R as uploadDocument（event loop）
-    participant W as worker thread
+    participant W as worker thread（StoreIndexer.add_documents）
+    participant E as events.notify_kb_changed
     participant P as BM25IndexProvider
 
-    R->>W: asyncio.to_thread(_write_chunks_and_invalidate_bm25)
-    W->>W: add_documents()（embedding API + SQLite）
+    R->>W: asyncio.to_thread(store.add_documents)
+    W->>W: 寫入 Chroma（embedding API + SQLite）
     Note over R: 此時 event loop 可處理其他 request
     alt request 被取消
         R--xR: CancelledError，route 結束
         Note over W: thread 繼續寫，不受影響
     end
-    W->>P: finally: invalidate(tenant, user, kb)
+    W->>E: finally：每個 kb 通知一次
+    E->>P: invalidate(tenant, user, kb)
     Note over P: 一定在寫入完成之後
 ```
 
-實測（`tests/api/test_upload_indexing.py` 與一次性腳本）：取消 request 時，舊寫法的事件順序是 `write-start → invalidate → write-end`，新寫法是 `write-start → write-end → invalidate`。
+實測（`tests/vectorstore/test_store_indexer_events.py`；Phase 2 時另以一次性腳本對照）：取消 request 時，失效放在 `await` 之後的寫法順序是 `write-start → invalidate → write-end`，現在的寫法是 `write-start → write-end → notify`。
 
 ---
 
@@ -474,12 +486,12 @@ flowchart LR
 
 1. **`chunk_id` 在 agent path 永遠是 `None`。** `FlashrankReranker._rerank_sync()` 重新建 `Document(page_content, metadata)`
    時沒帶 `id`（`reranker.py:90-94`），`retrieval.py:18` 的 `doc.id` 因此全是 `None`。
-   就算不經 rerank，BM25 那半也拿不到 id：`get_all_documents_in_kb()` 建 `Document` 時沒用 `raw["ids"]`（`StoreIndexer.py:52`）。
+   就算不經 rerank，BM25 那半也拿不到 id：`get_all_documents_in_kb()` 建 `Document` 時沒用 `raw["ids"]`（`StoreIndexer.py:61`）。
 2. **rerank 只重排、不篩選。** agent path 的 `HybridRetriever` `top_k=4` 截斷後才送 reranker，reranker 也收斂到 4——
    cross-encoder 只能在 4 筆裡重排序，和 `FlashrankReranker` docstring 建議的「retriever 寬撈 8、reranker 收斂到 4」不符。
-3. **BM25 cache 只存在單一 process。** 多 worker 部署時 `invalidate()` 只打得到收到 upload 的那個 worker，
-   其他 worker 繼續用舊 index，直到被 LRU 淘汰或重啟（`bm25_index.py` 模組 docstring 已註明）。
-4. **任何寫入 / 刪除 chunk 的新路徑都必須記得呼叫 `invalidate()`。** 目前只有 upload 這一處；之後加刪除文件 API 時容易漏。
-5. **`Collection_manager.cache` 沒有上限**，key 數量隨 `(user_id, tenant_id)` 組合成長；且 key 不隨 partition 策略收斂（見上）。
+3. **BM25 cache 只存在單一 process。** 多 worker 或外部 process 的寫入收不到通知；2026-10-09 起由 TTL 保底，最多延遲 600 秒才反映（原本是直到 LRU 淘汰或重啟）。
+   要立即一致需要跨 process 的版本比對，留到多 worker（`vectorstore-structure-fixes` Phase 6）時再做。
+4. ~~**任何寫入 / 刪除 chunk 的新路徑都必須記得呼叫 `invalidate()`。**~~ **已修正（2026-10-09）。** 改由 `StoreIndexer` 寫入後自動通知；新路徑只要經過 `StoreIndexer` 就會失效。
+5. ~~**`Collection_manager.cache` 沒有上限**~~ **已修正（2026-10-09，計劃 Phase 3）。**
 6. ~~**`StoreIndexer.retrieve()` 是死碼**~~ **已刪除（2026-10-09，計劃 Phase 7）。**
 7. **Legacy path 的 `__main__` 跑不起來**：`create_pipeline()` 沒帶必要參數（`pipelines.py:43`）。

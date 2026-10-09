@@ -14,7 +14,6 @@ from app.models.document import Document, IngestionStatus
 from app.rag.cleaning.data_cleaning import clean_chunks, clean_extracted_documents
 from app.rag.loaders.base_loader import base_loader
 from app.rag.pipelines import create_pipeline
-from app.rag.retriever.bm25_index import get_bm25_index_provider
 from app.rag.splitters.chunkerFactory import ChunkerFactory
 from app.schemas import  DocumentUploadResponse
 from app.schemas.documents import DocumentResponse
@@ -25,27 +24,6 @@ from app.vectorstore import get_vector_store_indexer
 from fastapi import UploadFile
 
 router = APIRouter(tags=["KnowledgeBases"])
-
-
-def _write_chunks_and_invalidate_bm25(store, chunks, metadata: dict) -> None:
-  # Runs on a worker thread: add_documents calls the embedding API and writes SQLite,
-  # which would otherwise block the event loop for the whole upload.
-  # invalidate() lives here rather than after the await so it always runs after the
-  # write has finished: if the request is cancelled, the thread keeps writing, and an
-  # invalidate fired early would let a BM25 rebuild cache a pre-write index.
-  try:
-    store.add_documents(
-      chunks,
-      tenant_id=metadata["tenant_id"],
-      user_id=metadata["user_id"],
-      metadata=metadata,
-    )
-  finally:
-    # Invalidate even if add_documents failed midway: Chroma may hold a partial write.
-    # Keyed off `metadata` so it matches exactly what the BM25 loader filters on.
-    get_bm25_index_provider().invalidate(
-      metadata["tenant_id"], metadata["user_id"], metadata["knowledge_base_id"]
-    )
 
 
 @router.post("/create", response_model=KnowledgeBaseCreateResponse)
@@ -110,7 +88,15 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
     chunking_list_str = [doc.page_content for doc in chunking_list]
     token_count = count_tokens(chunking_list_str, settings.EMBEDDING_PROVIDE_TYPE)
     store = get_vector_store_indexer()
-    await asyncio.to_thread(_write_chunks_and_invalidate_bm25, store, chunking_list, metadata)
+    # Off the event loop: add_documents calls the embedding API and writes SQLite.
+    # StoreIndexer notifies the BM25 cache itself, after the write, on the same thread.
+    await asyncio.to_thread(
+      store.add_documents,
+      chunking_list,
+      tenant_id=metadata["tenant_id"],
+      user_id=metadata["user_id"],
+      metadata=metadata,
+    )
     
     factory.print_chunks_transformation(document_list, chunking_list)
     # handle upload process

@@ -2,20 +2,24 @@
 
 BM25 沒辦法建在 Chroma 裡，只能把整個 KB 的 chunk 撈回記憶體再 tokenize、建倒排索引。
 這筆成本在文件沒變之前每次都一樣，所以依 `(tenant_id, user_id, knowledge_base_id)`
-cache 起來，文件寫入時由寫入端呼叫 `invalidate()` 失效。
+cache 起來。失效有兩層：
+
+- 經過 `StoreIndexer` 的寫入會透過 `app/vectorstore/events.py` 自動呼叫 `invalidate()`
+  （在寫入的同一個 thread、寫入之後），寫入端不必自己記得。
+- 收不到通知的寫入（其他 process、其他 worker、直接寫 chromadb 的腳本）靠 TTL 保底：
+  cache 超過 `ttl_seconds` 就重建。
 
 建置刻意延到「檢索被 invoke 時」才發生（`CachedBM25Retriever`），而不是
 `get_retriever()` 組裝時：`BaseRetriever` 的 async 路徑會把 sync 實作丟進 executor，
 cache miss 的重活因此自然離開 event loop，`get_retriever()` 則只剩純組裝、可以是 sync。
 
 已知限制：
-- cache 只存在單一 process。多 worker 部署時 `invalidate()` 只打得到其中一個，
-  其他 worker 會持續用舊 index，直到被 LRU 淘汰或重啟。
-- 任何會寫入或刪除 KB chunk 的路徑都必須呼叫 `invalidate()`；目前只有
-  `POST /api/v1/knowledgeBases/upload`。
+- cache 只存在單一 process。多 worker 或外部 process 的寫入最多延遲 TTL 才反映。
+- 任何會寫入或刪除 KB chunk 的路徑都必須經過 `StoreIndexer`，才會自動失效。
 """
 
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable
 from functools import lru_cache
@@ -27,12 +31,16 @@ from langchain_core.retrievers import BaseRetriever
 from pydantic import Field
 
 from app.vectorstore.StoreIndexer import get_vector_store_indexer
+from app.vectorstore.events import on_kb_changed
 
 IndexKey = tuple[str, str, str]
 DocumentLoader = Callable[[str, str, str], list[Document]]
 
 # Each cached index holds the full text of its KB in memory, so the cache must be bounded.
 DEFAULT_MAX_INDEXES = 64
+# Safety net for writes this process is never told about. Not measured: shorter recovers
+# sooner but rebuilds large KBs (load all chunks + tokenize) more often.
+DEFAULT_TTL_SECONDS = 600.0
 
 
 def _load_documents_from_vector_store(tenant_id: str, user_id: str, knowledge_base_id: str) -> list[Document]:
@@ -46,11 +54,19 @@ class BM25IndexProvider:
     rather than `asyncio.Lock`.
     """
 
-    def __init__(self, load_documents: DocumentLoader | None = None, max_indexes: int = DEFAULT_MAX_INDEXES):
+    def __init__(
+        self,
+        load_documents: DocumentLoader | None = None,
+        max_indexes: int = DEFAULT_MAX_INDEXES,
+        ttl_seconds: float | None = DEFAULT_TTL_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         self._load_documents = load_documents or _load_documents_from_vector_store
         self._max_indexes = max_indexes
-        # `None` is a cached value too: it means the KB is empty.
-        self._indexes: OrderedDict[IndexKey, BM25Retriever | None] = OrderedDict()
+        self._ttl_seconds = ttl_seconds  # None: never expires
+        self._clock = clock
+        # Value is (index, built_at). `None` is a cached index too: it means the KB is empty.
+        self._indexes: OrderedDict[IndexKey, tuple[BM25Retriever | None, float]] = OrderedDict()
         self._generations: dict[IndexKey, int] = {}
         self._lock = threading.Lock()
 
@@ -60,13 +76,18 @@ class BM25IndexProvider:
         key = (tenant_id, user_id, knowledge_base_id)
         with self._lock:
             if key in self._indexes:
-                self._indexes.move_to_end(key)
-                return self._indexes[key]
+                index, built_at = self._indexes[key]
+                if self._ttl_seconds is None or self._clock() - built_at <= self._ttl_seconds:
+                    self._indexes.move_to_end(key)
+                    return index
+                del self._indexes[key]
             generation = self._generations.get(key, 0)
 
         # Built outside the lock so one large KB does not stall lookups for every other KB.
         # Concurrent misses on the same key may each build once; the result is identical,
         # so that is accepted rather than adding per-key locking.
+        # Stamped before loading: the index can only be as fresh as the moment its load began.
+        built_at = self._clock()
         documents = self._load_documents(tenant_id, user_id, knowledge_base_id)
         # BM25Retriever.from_documents raises on an empty list (it unpacks zip(*docs)).
         index = BM25Retriever.from_documents(documents) if documents else None
@@ -75,7 +96,7 @@ class BM25IndexProvider:
             # An invalidate() that landed while we were building means `documents` may
             # predate a write. Serve it to this caller, but do not cache it.
             if self._generations.get(key, 0) == generation:
-                self._indexes[key] = index
+                self._indexes[key] = (index, built_at)
                 self._indexes.move_to_end(key)
                 while len(self._indexes) > self._max_indexes:
                     self._indexes.popitem(last=False)
@@ -90,7 +111,11 @@ class BM25IndexProvider:
 
 @lru_cache(maxsize=1)
 def get_bm25_index_provider() -> BM25IndexProvider:
-    return BM25IndexProvider()
+    provider = BM25IndexProvider()
+    # Writes through StoreIndexer invalidate automatically. Before the provider exists
+    # there is no cache, so writes made earlier need no notification.
+    on_kb_changed(provider.invalidate)
+    return provider
 
 
 class CachedBM25Retriever(BaseRetriever):

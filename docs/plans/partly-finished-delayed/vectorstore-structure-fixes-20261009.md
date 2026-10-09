@@ -139,6 +139,8 @@ flowchart LR
 ## Phase 2：ingestion 不再卡住 event loop
 
 > **狀態：✅ 已完成（2026-10-09，未 commit）。** 測試 19 passed（Phase 1 後的 15 + 新增 4）；手動上傳驗證尚未做。
+>
+> **後續（2026-10-09）**：下方的 `_write_chunks_and_invalidate_bm25()` 與 `tests/api/test_upload_indexing.py` 已被 [`bm25-cache-staleness`](../finished/bm25-cache-staleness-20261009.md) 取代——失效改由 `StoreIndexer.add_documents()` 在同一個 thread、寫入之後自動通知，順序保證不變；測試移到 `tests/vectorstore/test_store_indexer_events.py`。
 
 **問題**：`uploadDocument` 是 `async def`（`knowledgeBases.py:55`），卻同步呼叫 `store.add_documents()`（`:90-95`），其中包含 embedding API 呼叫與 SQLite 寫入；執行期間整個 FastAPI process 無法處理其他 request。
 

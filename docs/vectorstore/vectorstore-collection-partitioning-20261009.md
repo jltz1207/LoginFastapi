@@ -49,16 +49,16 @@ timeline
 
 | 落地步驟 | 狀態 | 位置 |
 |---|---|---|
-| ingestion 寫入三個 metadata key | ✅ 完成 | `app/api/v1/endpoints/knowledgeBases.py:87-91` |
-| dense 檢索三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:28-44` |
-| BM25 loader 三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:46-53` |
+| ingestion 寫入三個 metadata key | ✅ 完成 | `app/api/v1/endpoints/knowledgeBases.py:65-69` |
+| dense 檢索三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:37-53` |
+| BM25 loader 三層過濾 | ✅ 完成 | `app/vectorstore/StoreIndexer.py:55-62` |
 | DB 加 `tenant_id`（users / KB / documents） | ✅ 完成 | `app/models/user.py:21`、`asistantKnowledgeBase.py:28`、`document.py:42` |
 | `ONE_TENANT_ONE_COLLECTION` 策略 | ✅ 完成（2026-10-09 起為預設） | `app/vectorstore/collection_manager.py:11` |
 | `chats.py` 的 tenant 佔位換成真值 | ✅ 完成 | `app/api/v1/endpoints/chats.py:42` |
 | 預設改為 per-tenant | ✅ 完成（2026-10-09，`PARTITION_METHOD=3`） | `app/core/config.py:18` |
 | 分區策略改為 per-tenant 屬性 | ❌ 仍是全域 env var | `app/core/config.py:18` |
 | collection 名帶 embedding 版本 | ✅ 完成（2026-10-09） | `collection_manager.py:39-49`（`_collection_name()`）、`config.py:23` |
-| `where` 組裝收斂成單一守門函式 | ✅ 完成（2026-10-09） | `StoreIndexer.scope_filter()`，`StoreIndexer.py:11-21` |
+| `where` 組裝收斂成單一守門函式 | ✅ 完成（2026-10-09） | `StoreIndexer.scope_filter()`，`StoreIndexer.py:12-22` |
 
 ---
 
@@ -155,14 +155,14 @@ flowchart LR
     R["retrieval request"] --> P{"BM25IndexProvider<br/>cache hit?"}
     P -->|hit| I["回傳既有 index"]
     P -->|miss| L["get_all_documents_in_kb()<br/>整個 KB 撈回記憶體"] --> BLD["BM25Retriever.from_documents()"] --> I
-    UP["POST /upload"] -->|"寫入後（同一 worker thread）"| INV["invalidate(tenant, user, kb)"] -.-> P
+    UP["StoreIndexer 寫入"] -->|"寫入後 notify_kb_changed（同一 thread）"| INV["invalidate(tenant, user, kb)"] -.-> P
 ```
 
 剩下的限制：
 
 - cache miss 時仍是全量載入，KB 一大，第一次查詢仍會很慢。
 - 每個 index 都把整個 KB 全文放在記憶體，64 個上限下的記憶體用量取決於 KB 大小（未量測）。
-- cache 只存在單一 process，多 worker 時 `invalidate()` 只打得到一個 worker。
+- cache 只存在單一 process，多 worker / 外部 process 的寫入收不到通知，靠 TTL（600 秒）保底。
 
 長期仍要考慮把 sparse retrieval 換成 Chroma 之外的持久化 index。
 
@@ -172,7 +172,7 @@ flowchart LR
 
 - 我在寫 chunk 進 Chroma 嗎？→ `tenant_id` / `user_id` / `knowledge_base_id` 三個 metadata key 一個都不能少，而且都是 `str`。
 - 我在組 `where` filter 嗎？→ 三層都要過濾，**不要**依賴 collection 名字當隔離。
-- 我在寫入或刪除 chunk 嗎？→ 一定要呼叫 `get_bm25_index_provider().invalidate(...)`，否則 BM25 會繼續回舊資料。
+- 我在寫入或刪除 chunk 嗎？→ 一定要經過 `StoreIndexer`（它會在寫入後自動通知 BM25 cache 失效）；直接寫 chromadb 的話，BM25 最多 600 秒後才反映。
 - 我在決定 collection 名字嗎？→ 只考慮效能與生命週期，不要把它當安全邊界。
 - 我在改 embedding model 嗎？→ collection 名字要換版本號，不能沿用。
 - 我在 module-level singleton 上存 retriever 嗎？→ 不行，會把第一個 request 的 tenant scope 洩漏給所有人（`multi_hop.py:130-132` 的註解，`88dbceb` 修的就是這個）。

@@ -1,6 +1,10 @@
 from langchain_core.documents import Document
 
+import pytest
+
+from app.rag.retriever import bm25_index
 from app.rag.retriever.bm25_index import BM25IndexProvider, CachedBM25Retriever
+from app.vectorstore import events
 
 _DOCS = [
     Document(id="1", page_content="apple banana"),
@@ -110,3 +114,67 @@ def test_retrievers_with_different_k_share_one_index_without_mutating_it():
     assert len(narrow.invoke("apple")) == 1
     assert provider.get("t", "u", "kb").k == shared_k_before
     assert len(loader.calls) == 1
+
+
+class _FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def test_index_is_reused_within_ttl_and_rebuilt_after_it():
+    loader, clock = _CountingLoader(), _FakeClock()
+    provider = BM25IndexProvider(load_documents=loader, ttl_seconds=60, clock=clock)
+
+    first = provider.get("t", "u", "kb")
+    clock.now += 60
+    assert provider.get("t", "u", "kb") is first
+    clock.now += 1
+    rebuilt = provider.get("t", "u", "kb")
+
+    assert rebuilt is not first
+    assert len(loader.calls) == 2
+
+
+def test_ttl_none_never_expires():
+    loader, clock = _CountingLoader(), _FakeClock()
+    provider = BM25IndexProvider(load_documents=loader, ttl_seconds=None, clock=clock)
+
+    first = provider.get("t", "u", "kb")
+    clock.now += 10**9
+
+    assert provider.get("t", "u", "kb") is first
+    assert len(loader.calls) == 1
+
+
+def test_expired_empty_kb_is_rebuilt_too():
+    loader, clock = _CountingLoader(documents=[]), _FakeClock()
+    provider = BM25IndexProvider(load_documents=loader, ttl_seconds=60, clock=clock)
+
+    assert provider.get("t", "u", "kb") is None
+    loader.documents = _DOCS  # written by another process, no notification
+    clock.now += 61
+
+    assert provider.get("t", "u", "kb") is not None
+
+
+@pytest.fixture
+def _isolated_singleton(monkeypatch):
+    monkeypatch.setattr(events, "_listeners", [])
+    bm25_index.get_bm25_index_provider.cache_clear()
+    yield
+    bm25_index.get_bm25_index_provider.cache_clear()
+
+
+def test_singleton_provider_is_invalidated_by_store_writes(_isolated_singleton, monkeypatch):
+    provider = bm25_index.get_bm25_index_provider()
+    loader = _CountingLoader()
+    monkeypatch.setattr(provider, "_load_documents", loader)
+
+    first = provider.get("t", "u", "kb")
+    events.notify_kb_changed("t", "u", "kb")
+
+    assert provider.get("t", "u", "kb") is not first
+    assert len(loader.calls) == 2

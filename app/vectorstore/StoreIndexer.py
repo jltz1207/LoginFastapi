@@ -3,6 +3,7 @@ from functools import lru_cache
 from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStoreRetriever
 from app.vectorstore.collection_manager import Collection_manager
+from app.vectorstore.events import notify_kb_changed
 
 class StoreIndexer:
     def __init__(self, collection_manager: Collection_manager | None = None):
@@ -22,8 +23,16 @@ class StoreIndexer:
 
     def add_documents(self, docs: list[Document], tenant_id: str, user_id: str, metadata: dict | None = None):
         metadata = metadata or {}
-        user_collection = self.collection_manager.get_or_create_collection(user_id=user_id, tenant_id=tenant_id)
-        user_collection.add_documents([Document(page_content = doc.page_content, metadata= metadata | doc.metadata) for doc in docs])
+        chunks = [Document(page_content = doc.page_content, metadata= metadata | doc.metadata) for doc in docs]
+        try:
+            user_collection = self.collection_manager.get_or_create_collection(user_id=user_id, tenant_id=tenant_id)
+            user_collection.add_documents(chunks)
+        finally:
+            # Notify even if the write failed midway: Chroma may hold a partial write.
+            # Runs on the writing thread, after the write, so a cache rebuilt on notify
+            # can never miss it (see app/vectorstore/events.py).
+            for knowledge_base_id in sorted({chunk.metadata.get("knowledge_base_id") for chunk in chunks} - {None}):
+                notify_kb_changed(tenant_id, user_id, knowledge_base_id)
 
     def get_dense_retriever(
         self,
