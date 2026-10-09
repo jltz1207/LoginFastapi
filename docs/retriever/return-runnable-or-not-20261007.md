@@ -94,7 +94,7 @@ Lazy 形狀把這筆成本跟「每個 query」脫鉤，呼叫端拿到 Runnable
 > 現在 index 由 `app/rag/retriever/bm25_index.py` 的 `BM25IndexProvider` 依
 > `(tenant_id, user_id, knowledge_base_id)` cache，文件上傳時失效；`CachedBM25Retriever`
 > 在 invoke 時才取 index，miss 的建置跟著 `ainvoke` 跑在 executor thread 上。
-> 所以 `get_retriever()` 只剩純組裝，已改回 sync。推導見 `docs/plans/multi-hop-branch-review-20260917.md` 附錄。
+> 所以 `get_retriever()` 只剩純組裝，已改回 sync。推導見 `docs/plans/partly-finished-delayed/multi-hop-branch-review-20260917.md` 附錄。
 
 （對照組：`BasicRetriever` 只是 `collection.as_retriever(...)`，本身就沒有建構成本，兩種形狀對它沒差 — 但介面要統一，得遷就成本高的那個。）
 
@@ -151,6 +151,6 @@ class RetrieverFactory(abc.ABC):
 
 - `get_retriever()` 是 **sync、只做組裝**。任何昂貴的準備工作（例如建 BM25 index）都要延到 invoke 時，並且要有 cache，不能放進 `get_retriever()`。
 - 兩個子類（`BasicRetriever` / `HybridRetriever`）的簽名必須**完全一致**，否則抽象基底類別失去意義 — 呼叫端沒辦法拿 `RetrieverFactory` 型別的變數做多型呼叫。
-- 回傳型別統一是 `Runnable[str, list[Document]]`，`HybridRetriever` 要靠 `| RunnableLambda(lambda docs: docs[:top_k])` 收斂筆數，因為 `EnsembleRetriever` 的 RRF **不做截斷**（詳見 `docs/plans/ensemble-retriever-topk-rrf-walkthrough-20260827.md`）。
+- 回傳型別統一是 `Runnable[str, list[Document]]`，`HybridRetriever` 要靠 `| RunnableLambda(lambda docs: docs[:top_k])` 收斂筆數，因為 `EnsembleRetriever` 的 RRF **不做截斷**（詳見 `docs/plans/finished/ensemble-retriever-topk-rrf-walkthrough-20260827.md`）。
 - 呼叫端一律 `await retriever.ainvoke(query)`，不要用同步的 `.invoke()` — 底層會打 Gemini embedding API，同步呼叫會阻塞整個 FastAPI event loop。
 - 若呼叫端會重複查詢（multi-hop、agent 迴圈），**要把 `get_retriever()` 的結果存起來重用**，不要每次重建；否則 lazy 的好處等於沒拿到。

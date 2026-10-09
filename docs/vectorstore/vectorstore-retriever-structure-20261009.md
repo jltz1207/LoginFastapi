@@ -21,7 +21,7 @@ flowchart LR
     CH --> CL["clean_chunks()"]
     CL --> AD["StoreIndexer.add_documents()<br/>metadata: tenant / user / kb"]
     AD --> DB[("Chroma")]
-    AD -->|finally| INV["BM25IndexProvider.invalidate(tenant, user, kb)"]
+    AD -->|"同一個 worker thread，finally"| INV["BM25IndexProvider.invalidate(tenant, user, kb)"]
 ```
 
 ### Retrieval（agent 主線）
@@ -30,7 +30,7 @@ flowchart LR
 flowchart TD
     N["retrieval_execution（agent entry node）"] --> HR["HybridRetriever((0.6, 0.4)).get_retriever()<br/>sync，純組裝，top_k=4"]
     HR --> BM["CachedBM25Retriever<br/>weight 0.6"]
-    HR --> DN["get_collection_retriever()<br/>dense, weight 0.4"]
+    HR --> DN["StoreIndexer.get_dense_retriever()<br/>dense, weight 0.4"]
     BM -->|invoke 時| P{"BM25IndexProvider.get()<br/>LRU, max 64"}
     P -->|miss| LOAD["StoreIndexer.get_all_documents_in_kb()<br/>→ BM25Retriever.from_documents()"]
     DN --> DB[("Chroma<br/>where $and: kb / user / tenant")]
@@ -70,21 +70,20 @@ classDiagram
     }
     class StoreIndexer {
         +add_documents()
-        +retrieve()
         +get_all_documents_in_kb()
     }
     class Collection_manager {
-        +cache: dict
+        -_cache: OrderedDict
+        +evict(user_id, tenant_id)
         +get_or_create_collection(user_id, tenant_id) Chroma
     }
     RetrieverFactory <|-- BasicRetriever
     RetrieverFactory <|-- HybridRetriever
     HybridRetriever --> CachedBM25Retriever : builds
-    HybridRetriever ..> get_collection_retriever : dense
-    BasicRetriever ..> get_collection_retriever
+    HybridRetriever ..> StoreIndexer : get_dense_retriever()
+    BasicRetriever ..> StoreIndexer : get_dense_retriever()
     CachedBM25Retriever --> BM25IndexProvider
     BM25IndexProvider ..> StoreIndexer : load_documents
-    get_collection_retriever ..> StoreIndexer
     StoreIndexer --> Collection_manager
 ```
 
@@ -111,14 +110,14 @@ classDiagram
         <<singleton>>
         +collection_manager: Collection_manager
         +add_documents(docs, tenant_id, user_id, metadata)
-        +retrieve(query, tenant_id, user_id)
         +get_all_documents_in_kb(tenant_id, user_id, kb_id) list~Document~
     }
     class Collection_manager {
         +client: chromadb.PersistentClient
         +embedding_function
         +partition_strategy: vector_partition_strategy
-        +cache: dict~str, Chroma~
+        -_cache: OrderedDict~str, Chroma~
+        -_max_collections: int
         -_collection_name(user_id, tenant_id) str
         +get_or_create_collection(user_id, tenant_id) Chroma
     }
@@ -167,8 +166,10 @@ classDiagram
 
 - **兩個 singleton 入口**：`get_vector_store_indexer()` 和 `get_chroma_db()`，都是 `lru_cache`，所以整個 process 只有一個 `StoreIndexer`、一個 `Collection_manager`、一個 `PersistentClient`。
 - **`Chroma` wrapper 有多個、`PersistentClient` 只有一個**：每個 wrapper 都共用同一個 client 與 embedding function，只差在指向哪個 collection。
-- **cache 的 key 與實際 collection 不是 1:1**：key 是 `{COLLECTION_NAME}_{user_id}_{tenant_id}`，實際名稱由 `vector_partition_strategy` 決定；策略 1 / 3 下多個 wrapper 會指到同一個 `Collection`。
-- 外部只透過 `StoreIndexer`（ingestion、BM25 loader）和 `get_vector_store_indexer().collection_manager`（dense，`app/rag/retriever/common.py:5-6`）進入這一層。
+- **cache 的 key 就是實際 collection 名稱**（Phase 3 起）：由 `_collection_name()` 依 `vector_partition_strategy` 與 `EMBEDDING_VERSION` 算出，一個實體 `Collection` 只對應一個 `Chroma` handle。
+- 外部有兩個進入點：
+  - 走 `StoreIndexer` 的方法：ingestion（`add_documents`）、BM25 loader（`get_all_documents_in_kb`）。
+  - dense 檢索：`get_dense_retriever()`，由 `HybridRetriever`、`BasicRetriever`、`pipelines.py` 直接呼叫（`hybrid_retriever.py:28`、`basic_retriever.py:11`）。
 
 ### 這個結構的優缺點
 
@@ -183,12 +184,12 @@ flowchart LR
     P --> P3["query path 與分區策略解耦"]
     P --> P4["handle cache 省掉重複建構"]
     P --> P5["client 可注入，易測試"]
-    C --> C1["facade 有破口，filter 重複兩處"]
-    C --> C2["cache 無上限、key 與 collection 不對齊"]
+    C --> C1["✅ 已修正：filter 寫兩份"]
+    C --> C2["✅ 已修正：cache 無上限、key 不對齊"]
     C --> C3["lru_cache singleton = 隱藏全域狀態"]
-    C --> C4["sync 寫入卡住 event loop"]
+    C --> C4["✅ 已修正：sync 寫入卡住 event loop"]
     C --> C5["PersistentClient 綁單機"]
-    C --> C6["collection 名無 embedding 版本"]
+    C --> C6["✅ 已修正：collection 名無 embedding 版本"]
 
     classDef pro fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef con fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
@@ -206,16 +207,23 @@ flowchart LR
 
 **缺點**
 
-1. **facade 有破口，filter 邏輯重複。** `StoreIndexer` 本意是唯一入口，但 dense 那條路直接拿 `get_vector_store_indexer().collection_manager`（`common.py:5-6`）繞過它；
-   三層 `where` 也在 `common.py:7-14` 與 `StoreIndexer.py:26-30` 各寫一份。兩處只要有一處漏改，sparse 與 dense 的隔離範圍就會不一致——這正是 `get_all_documents_in_kb()` 註解在防的事。
-2. **cache 無上限，key 與實際 collection 不對齊。** 裸 `dict` 隨 `(user_id, tenant_id)` 組合無限成長；策略 1 / 3 下多個 key 各包一個 wrapper 指向同一個 collection。
+1. ~~**三層 tenant filter 寫了兩份，其中一份在 vector store 層之外。**~~ **已修正（2026-10-09，計劃 Phase 1）。**
+   原本 dense 的 filter 在 `app/rag/retriever/common.py` 的 `get_collection_retriever()` 組，BM25 的在 `StoreIndexer.get_all_documents_in_kb()` 組，兩份各自維護。
+   現在 `get_collection_retriever()` 已刪除，兩條路都經過 `StoreIndexer.scope_filter()`（`StoreIndexer.py:11-21`），
+   外部拿 dense 檢索改呼叫 `StoreIndexer.get_dense_retriever()`（`:28-44`），不必再自己取 `collection_manager`。
+   `tests/vectorstore/test_store_indexer_scope.py` 用共用 collection（最壞情況）驗證 dense 與 sparse 看到的範圍一致、跨 tenant 看不到。
+2. ~~**cache 無上限，key 與實際 collection 不對齊。**~~ **已修正（2026-10-09，計劃 Phase 3）。**
+   原本裸 `dict` 隨 `(user_id, tenant_id)` 組合無限成長，策略 1 / 3 下多個 key 各包一個 wrapper 指向同一個 collection。
+   現在是上限 256 的 LRU，key 用實際 collection 名稱，並加了 lock。
 3. **`lru_cache` singleton 是隱藏的全域狀態。** `PARTITION_METHOD`、embedding 設定在第一次呼叫時就被凍結，改設定必須重啟 process；測試之間也要記得 `cache_clear()`，否則會互相污染（目前 `tests/` 裡沒有任何 `cache_clear()` 呼叫）。
-4. **sync 寫入卡住 event loop。** `uploadDocument` 是 `async def`（`knowledgeBases.py:55`），卻直接同步呼叫 `store.add_documents()`——裡面包含呼叫 embedding API 與寫 SQLite，執行期間整個 FastAPI process 無法處理其他 request。
-   （檢索端沒有這個問題：dense 走 `ainvoke`，BM25 由 `BaseRetriever` 丟進 executor。）
+4. ~~**sync 寫入卡住 event loop。**~~ **已修正（2026-10-09，計劃 Phase 2）。**
+   原本 `uploadDocument`（`async def`）直接同步呼叫 `store.add_documents()`，embedding API 呼叫與 SQLite 寫入期間整個 FastAPI process 無法處理其他 request。
+   現在改成 `await asyncio.to_thread(_write_chunks_and_invalidate_bm25, ...)`（`knowledgeBases.py:113`），寫入與 BM25 失效都在 worker thread 上執行。
+   （檢索端本來就沒有這個問題：dense 走 `ainvoke`，BM25 由 `BaseRetriever` 丟進 executor。）
 5. **`PersistentClient` 綁單機。** 資料存在本機 `./chroma_data`，多台機器無法共用；多個 worker process 同時開同一個目錄的安全性未查證（推論：chromadb 官方建議多 process 情境改用 client/server 模式 `HttpClient`）。
    要擴展時得換成 `chromadb.HttpClient`，所幸 `Collection_manager` 已支援注入 client，換的範圍只在 `client.py`。
-6. **collection 名字沒有 embedding 版本。** 換 embedding model 後新舊向量會混在同一個 collection，搜尋結果靜默劣化。
-7. **小問題。** `StoreIndexer.retrieve()` 是死碼；`self.cache` 沒有 lock（並行 miss 最壞只是多建一個等價 wrapper，推論，未實測）；命名風格不一致（`Chroma_db`、`Collection_manager`、檔名 `StoreIndexer.py`）。
+6. ~~**collection 名字沒有 embedding 版本。**~~ **已修正（2026-10-09，計劃 Phase 5）。** 名稱加入 `EMBEDDING_VERSION`，換 model 時遞增版本即可讓新舊向量分開；既有資料用 `scripts/migrate_collection_names.py` 遷移。
+7. **小問題。** ~~`StoreIndexer.retrieve()` 是死碼~~（Phase 7 已刪除）；命名風格不一致（`Chroma_db`、`Collection_manager`、檔名 `StoreIndexer.py`）。
 
 ### `client.py`
 
@@ -230,29 +238,31 @@ flowchart LR
 
 | 值 | 策略 | collection 名 |
 |---|---|---|
-| 1 | `GLOBAL_COLLECTION` | `{COLLECTION_NAME}` |
-| 2 | `ONE_USER_ONE_COLLECTION`（預設） | `{COLLECTION_NAME}_{user_id}` |
-| 3 | `ONE_TENANT_ONE_COLLECTION` | `{COLLECTION_NAME}_{tenant_id}` |
+| 1 | `GLOBAL_COLLECTION` | `{COLLECTION_NAME}_{EMBEDDING_VERSION}` |
+| 2 | `ONE_USER_ONE_COLLECTION`（預設） | `{COLLECTION_NAME}_{EMBEDDING_VERSION}_{user_id}` |
+| 3 | `ONE_TENANT_ONE_COLLECTION` | `{COLLECTION_NAME}_{EMBEDDING_VERSION}_{tenant_id}` |
 
 `get_or_create_collection(user_id, tenant_id)` 回傳的是 **LangChain 的 `Chroma` wrapper**（不是原生 chromadb collection），
 embedding function 來自 `EmbeddingFactory`。
 
-**新增：handle cache**（commit `f4ca1d9`）。`self.cache: dict[str, Chroma]`（`collection_manager.py:18`），
-cache key 一律是 `{COLLECTION_NAME}_{user_id}_{tenant_id}`（`:19-20`），**與 partition 策略無關**——
-所以策略 1 / 3 下，多個 key 會指向同一個實體 collection，各自持有一個 `Chroma` wrapper。
-這不影響正確性（wrapper 是無狀態的 handle），只是重複物件。
+**handle cache**（`f4ca1d9` 加入，2026-10-09 Phase 3 改寫）。`self._cache` 是有上限的 LRU（`DEFAULT_MAX_COLLECTIONS = 256`），
+key 就是 `_collection_name()` 算出的**實際 collection 名稱**（`collection_manager.py:39-46`），所以一個實體 collection 只對應一個 `Chroma` handle。
+存取有 `threading.Lock`；`evict()`（`:69-72`）給之後的刪除功能用。細節見 `vectorstore-collection-handle-cost-20261009.md`〈現況的 cache〉。
 因為 `Collection_manager` 由 `StoreIndexer` 持有、`StoreIndexer` 又是 singleton，這個 cache 實際上是 process-wide。
+
+建構子可注入 `client`、`embedding_function`、`partition_strategy`、`max_collections`；沒傳時才讀 `settings` / `EmbeddingFactory`，測試因此不需要 API key。
 
 ---
 ### `StoreIndexer.py`
 ```
-StoreIndexer 是被設計成唯一入口（add_documents / retrieve / get_all_documents_in_kb 這組 API 形狀就是這個意圖）
+StoreIndexer 是 vector store 層唯一的讀寫入口：所有碰 Chroma 的讀取都在這裡套上 tenant filter
 ```
-三個方法：
+四個方法：
 
-- `add_documents()`（`StoreIndexer.py:10-13`）：把 caller 傳的 metadata 用 `metadata | doc.metadata` 合併進每個 chunk 後寫入。
-- `retrieve()`（`StoreIndexer.py:15-17`，舊名 `query()`）：空殼，只寫了 `user_collection.query` 沒有呼叫，是死碼。
-- `get_all_documents_in_kb()`（`StoreIndexer.py:19-34`）：`where` 用 `$and` 同時過濾
+- `scope_filter()`（`StoreIndexer.py:11-21`）：tenant / user / kb 三層 `$and` filter 的唯一來源（Phase 1）。
+- `add_documents()`（`StoreIndexer.py:23-26`）：把 caller 傳的 metadata 用 `metadata | doc.metadata` 合併進每個 chunk 後寫入。
+- `get_dense_retriever()`（`StoreIndexer.py:28-44`）：回傳套好 `scope_filter()` 的 dense retriever（Phase 1，取代 `common.py` 的 `get_collection_retriever()`）。
+- `get_all_documents_in_kb()`（`StoreIndexer.py:46-53`）：`where` 用 `scope_filter()` 同時過濾
   `knowledge_base_id` / `user_id` / `tenant_id`，現在是 **`BM25IndexProvider` 的 document loader**。
   程式碼裡的註解明確說了理由——dense 那半已經三層都過濾，sparse 這半不補齊的話會洩漏出 dense 看不到的文件。
 
@@ -276,28 +286,25 @@ def get_retriever(self, tenant_id, user_id, knowledge_base_id, top_k: int = 8) -
 回傳型別是 `Runnable` 而不是 `BaseRetriever`——所以實作可以自由在尾巴疊 `RunnableLambda`。
 契約是「`get_retriever()` 只組裝，不做 I/O」，重活一律延到 invoke 時。
 
-### `common.py`
+### dense 檢索入口：`StoreIndexer.get_dense_retriever()`
 
-`get_collection_retriever()`（`common.py:4-22`）是 dense 檢索的共同入口，也是**租戶邊界真正被 enforce 的地方**：
+原本在 `common.py` 的 `get_collection_retriever()` 已搬進 `StoreIndexer`（計劃 Phase 1），`common.py` 只剩 `format_doc_to_string()` 給 legacy LCEL path 用。
+dense 檢索現在由 `StoreIndexer.get_dense_retriever()`（`app/vectorstore/StoreIndexer.py:28-44`）提供，**租戶邊界在 `scope_filter()` 一處 enforce**：
 
 ```python
-where = {"$and": [
-    {"knowledge_base_id": knowledge_base_id},
-    {"user_id": user_id},
-    {"tenant_id": tenant_id},
-]}
 return collection.as_retriever(
     search_type=search_type,
-    search_kwargs={"k": top_k, "filter": where},
+    search_kwargs={"k": top_k, "filter": self.scope_filter(tenant_id, user_id, knowledge_base_id)},
 )
 ```
 
-支援 `extra_filter` 追加條件、`search_type` 可切 `similarity` / `mmr`。
-另有 `format_doc_to_string()`（`common.py:24-26`）給 legacy LCEL path 用。
+`search_type` 可切 `similarity` / `mmr`。**刻意不支援額外 filter**（原本的 `extra_filter` 已於 2026-10-09 移除）：
+`HybridRetriever` 的 BM25 那半是每個 `(tenant, user, kb)` 快取一份整個 KB 的 index，套不上額外條件；
+只給 dense 加 filter 會讓兩半的範圍不一致。之後若需要「只查某份文件」，要連同 BM25 的事後過濾一起做。
 
 ### `basic_retriever.py`
 
-純 dense，就是 `get_collection_retriever(..., search_type="similarity")` 的薄包裝（`basic_retriever.py:7-11`）。
+純 dense，就是 `get_vector_store_indexer().get_dense_retriever(..., search_type="similarity")` 的薄包裝（`basic_retriever.py:7-13`）。
 **現在有人用了**：`app/routing/branches/multi_hop.py:133` 每個 request 依 tenant scope 建一個
 （註解特別寫明不能 cache 在 `self` 上，因為 `agentic_subgraph` 是 module-level singleton，會把第一個 request 的 tenant scope 洩漏給後續使用者）。
 
@@ -344,7 +351,7 @@ sequenceDiagram
 目前 agent 實際走的路（`hybrid_retriever.py:8-33`）：
 
 1. 建 `CachedBM25Retriever`（只組裝，index 在 invoke 時才向 provider 拿）
-2. `get_collection_retriever()` 拿 dense retriever
+2. `indexer.get_dense_retriever()` 拿 dense retriever（`indexer` 可由建構子注入，預設在 `get_retriever()` 時才取 singleton）
 3. `EnsembleRetriever(retrievers=[bm25, dense], weights=self.weights)` 用 weighted RRF 融合；預設權重 `(0.5, 0.5)`
 4. 尾巴接 `RunnableLambda(lambda docs: docs[:top_k])` 截斷——因為 ensemble 融合後筆數會超過 `top_k`
 
@@ -379,8 +386,8 @@ RunnableParallel(query=RunnablePassthrough(), documents=retriever) | RunnableLam
 flowchart LR
     A["Agent path<br/>retrieval.py"] --> H["HybridRetriever<br/>BM25 + dense"] --> RR["FlashrankReranker"]
     M["Multi-hop branch<br/>multi_hop.py"] --> B["BasicRetriever<br/>dense only"]
-    L["Legacy LCEL<br/>pipelines.py"] --> G["get_collection_retriever()<br/>dense only"]
-    H --> G2["get_collection_retriever()"]
+    L["Legacy LCEL<br/>pipelines.py"] --> G["StoreIndexer.get_dense_retriever()<br/>dense only"]
+    H --> G2["StoreIndexer.get_dense_retriever()"]
     B --> G2
     G & G2 --> C[("Chroma<br/>三層 filter")]
 ```
@@ -408,13 +415,13 @@ checkpointer 依 `thread_id` 存 state，不重設的話會跨輪累積、幾個
 ### Legacy LCEL path
 
 `app/rag/pipelines.py:19-32`，給 `POST /api/v1/knowledgeBases/query` 用。
-直接叫 `get_collection_retriever()`，沒有 hybrid、沒有 rerank、model 寫死 `gemini-3.5-flash`。
+直接叫 `get_vector_store_indexer().get_dense_retriever()`，沒有 hybrid、沒有 rerank、model 寫死 `gemini-3.5-flash`。
 
 ---
 
 ## Ingestion 端的 metadata 契約與 cache 失效
 
-`app/api/v1/endpoints/knowledgeBases.py:64-68` 在寫入前組出三個 key：
+`app/api/v1/endpoints/knowledgeBases.py:87-91` 在寫入前組出三個 key：
 
 ```python
 metadata = {
@@ -426,10 +433,31 @@ metadata = {
 
 三個值都必須是 `str`——型別錯 Chroma 不會 raise，只會靜默回 0 筆。見 `docs/id-type-convention-20260827.md`。
 
-寫入後在 `finally` 裡呼叫 `get_bm25_index_provider().invalidate(...)`（`knowledgeBases.py:89-102`）：
+寫入與失效包在 `_write_chunks_and_invalidate_bm25()`（`knowledgeBases.py:30-49`），由 route 用 `asyncio.to_thread` 丟到 worker thread（`:113`）：
 
-- 放 `finally` 是因為 `add_documents` 中途失敗時 Chroma 可能已有部分寫入。
+- 寫入後在 `finally` 裡呼叫 `get_bm25_index_provider().invalidate(...)`：`add_documents` 中途失敗時 Chroma 可能已有部分寫入。
 - 參數直接取自 `metadata`，保證和 BM25 loader 的過濾條件完全一致。
+- **`invalidate()` 放在 thread 裡、而不是 `await` 之後**：request 被取消時，`await` 會立刻丟出 `CancelledError`，但 worker thread 會繼續寫。
+  如果失效寫在 `await` 外面的 `finally`，它會比寫入先完成，期間若有 BM25 重建，就會把寫入前的 index 存進 cache（generation counter 擋不住，因為失效已經先發生了）。
+
+```mermaid
+sequenceDiagram
+    participant R as uploadDocument（event loop）
+    participant W as worker thread
+    participant P as BM25IndexProvider
+
+    R->>W: asyncio.to_thread(_write_chunks_and_invalidate_bm25)
+    W->>W: add_documents()（embedding API + SQLite）
+    Note over R: 此時 event loop 可處理其他 request
+    alt request 被取消
+        R--xR: CancelledError，route 結束
+        Note over W: thread 繼續寫，不受影響
+    end
+    W->>P: finally: invalidate(tenant, user, kb)
+    Note over P: 一定在寫入完成之後
+```
+
+實測（`tests/api/test_upload_indexing.py` 與一次性腳本）：取消 request 時，舊寫法的事件順序是 `write-start → invalidate → write-end`，新寫法是 `write-start → write-end → invalidate`。
 
 ---
 
@@ -446,12 +474,12 @@ flowchart LR
 
 1. **`chunk_id` 在 agent path 永遠是 `None`。** `FlashrankReranker._rerank_sync()` 重新建 `Document(page_content, metadata)`
    時沒帶 `id`（`reranker.py:90-94`），`retrieval.py:18` 的 `doc.id` 因此全是 `None`。
-   就算不經 rerank，BM25 那半也拿不到 id：`get_all_documents_in_kb()` 建 `Document` 時沒用 `raw["ids"]`（`StoreIndexer.py:33`）。
+   就算不經 rerank，BM25 那半也拿不到 id：`get_all_documents_in_kb()` 建 `Document` 時沒用 `raw["ids"]`（`StoreIndexer.py:52`）。
 2. **rerank 只重排、不篩選。** agent path 的 `HybridRetriever` `top_k=4` 截斷後才送 reranker，reranker 也收斂到 4——
    cross-encoder 只能在 4 筆裡重排序，和 `FlashrankReranker` docstring 建議的「retriever 寬撈 8、reranker 收斂到 4」不符。
 3. **BM25 cache 只存在單一 process。** 多 worker 部署時 `invalidate()` 只打得到收到 upload 的那個 worker，
    其他 worker 繼續用舊 index，直到被 LRU 淘汰或重啟（`bm25_index.py` 模組 docstring 已註明）。
 4. **任何寫入 / 刪除 chunk 的新路徑都必須記得呼叫 `invalidate()`。** 目前只有 upload 這一處；之後加刪除文件 API 時容易漏。
 5. **`Collection_manager.cache` 沒有上限**，key 數量隨 `(user_id, tenant_id)` 組合成長；且 key 不隨 partition 策略收斂（見上）。
-6. **`StoreIndexer.retrieve()` 是死碼**（`StoreIndexer.py:15-17`）。
+6. ~~**`StoreIndexer.retrieve()` 是死碼**~~ **已刪除（2026-10-09，計劃 Phase 7）。**
 7. **Legacy path 的 `__main__` 跑不起來**：`create_pipeline()` 沒帶必要參數（`pipelines.py:43`）。

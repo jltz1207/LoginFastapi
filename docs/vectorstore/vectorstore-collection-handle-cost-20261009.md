@@ -7,7 +7,7 @@
 **結論：**
 - 量測時（無 cache）每次約 3 ms，不是瓶頸，當時判斷「先不要修」。
 - 之後 `f4ca1d9`（2026-09-07）還是在 `Collection_manager` 加了 handle cache，現在重複呼叫只剩一次 dict 查詢。
-- 這個 cache 目前**沒有上限**，key 也不隨 partition 策略收斂，見〈現況的 cache 與剩餘問題〉。
+- 這個 cache 原本沒有上限、key 也不隨 partition 策略收斂；2026-10-09 已改成有上限的 LRU，key 用實際 collection 名稱，見〈現況的 cache〉。
 
 ---
 
@@ -21,7 +21,7 @@ flowchart TD
     CM --> CL["client<br/>= get_chroma_db().client"]
     GCD["get_chroma_db()<br/>lru_cache"] --> PC["chromadb.PersistentClient<br/>~1150 ms，一次性"]
     CL -.-> PC
-    CM --> CACHE["self.cache: dict[str, Chroma]<br/>（f4ca1d9 新增）"]
+    CM --> CACHE["self._cache: LRU（max 256）<br/>key = 實際 collection 名"]
     CACHE --> W1["Chroma wrapper<br/>~3.2 ms / 個（無 cache 時每次付）"]
 ```
 
@@ -69,8 +69,8 @@ pie showData
 
 ## 放進一個 request 的比例看
 
-hybrid retrieval 一個 request 會呼叫兩次 `get_or_create_collection()`：dense 在 `app/rag/retriever/common.py:6`；
-BM25 只有在 **cache miss** 時才經 `StoreIndexer.get_all_documents_in_kb()`（`StoreIndexer.py:20`）呼叫。
+hybrid retrieval 一個 request 會呼叫兩次 `get_or_create_collection()`：dense 在 `StoreIndexer.get_dense_retriever()`（`app/vectorstore/StoreIndexer.py:40`）；
+BM25 只有在 **cache miss** 時才經 `StoreIndexer.get_all_documents_in_kb()`（`StoreIndexer.py:47`）呼叫。
 
 ```mermaid
 sequenceDiagram
@@ -112,51 +112,51 @@ sequenceDiagram
 
 ---
 
-## 現況的 cache 與剩餘問題
+## 現況的 cache（2026-10-09 起，計劃 Phase 3）
 
-`app/vectorstore/collection_manager.py:13-44`：
+`f4ca1d9` 加的第一版 cache 是裸 `dict`，key 永遠是 `{COLLECTION_NAME}_{user_id}_{tenant_id}`，有兩個問題：沒有上限；key 和實際 collection 名稱不對齊，
+策略 1 / 3 下同一個實體 collection 會被多個 key 各包一個 wrapper。Phase 3 改成下面的寫法（`app/vectorstore/collection_manager.py:39-72`）：
 
 ```python
-self.cache: dict[str, Chroma] = {}
-
 def _collection_name(self, user_id: str, tenant_id: str) -> str:
-    return f"{settings.COLLECTION_NAME}_{user_id}_{tenant_id}"
+    # 實際的 Chroma collection 名稱，同時當 cache key
+    if self.partition_strategy == vector_partition_strategy.ONE_USER_ONE_COLLECTION:
+        return f"{settings.COLLECTION_NAME}_{user_id}"
+    if self.partition_strategy == vector_partition_strategy.ONE_TENANT_ONE_COLLECTION:
+        return f"{settings.COLLECTION_NAME}_{tenant_id}"
+    return settings.COLLECTION_NAME
 
 def get_or_create_collection(self, user_id: str, tenant_id: str) -> Chroma:
     collection_name = self._collection_name(user_id, tenant_id)
-    if collection_name in self.cache:
-        return self.cache[collection_name]
-    # ... 依 partition_strategy 建 Chroma(collection_name=實際名稱)
-    self.cache[collection_name] = vector_store
-    return vector_store
+    with self._lock:                      # hit：move_to_end 後回傳
+        ...
+    vector_store = Chroma(...)            # miss：在 lock 外建
+    with self._lock:                      # 寫入，超過上限就淘汰最舊的
+        ...
 ```
 
 ```mermaid
 flowchart LR
-    subgraph keys["cache key：{NAME}_{user_id}_{tenant_id}"]
-        K1["NAME_u1_t1"]
-        K2["NAME_u2_t1"]
-        K3["NAME_u3_t1"]
+    subgraph before["Phase 3 之前（PARTITION_METHOD=3）"]
+        K1["NAME_u1_t1"] --> W1["wrapper #1"] --> C1[("NAME_t1")]
+        K2["NAME_u2_t1"] --> W2["wrapper #2"] --> C1
+        K3["NAME_u3_t1"] --> W3["wrapper #3"] --> C1
     end
-    subgraph real["實際 collection（PARTITION_METHOD=3）"]
-        C1[("NAME_t1")]
+    subgraph after["Phase 3 之後"]
+        K["NAME_t1"] --> W["wrapper"] --> C2[("NAME_t1")]
     end
-    K1 --> W1["Chroma wrapper #1"] --> C1
-    K2 --> W2["Chroma wrapper #2"] --> C1
-    K3 --> W3["Chroma wrapper #3"] --> C1
+    before ~~~ after
 ```
 
-和 2026-09-04 版本建議的寫法相比，有三點落差：
+- **有上限**：`OrderedDict` 做 LRU，`DEFAULT_MAX_COLLECTIONS = 256`（`:13`），寫法與 `BM25IndexProvider` 一致。
+  `Chroma` 物件只是 handle（HNSW index 由 chromadb 的 segment manager 管），單個不大，但 key 數量會隨 user / tenant 成長，仍要有界。
+- **一個實體 collection 只對應一個 handle**：cache 大小對齊 collection 數，而不是 `(user, tenant)` 組合數。三個 `Chroma(...)` 分支也合併成一個。
+- **有 lock**：`get_or_create_collection()` 會從 executor thread（BM25 loader、upload 寫入）呼叫，所以用 `threading.Lock`。
+  `Chroma()` 在 lock 外建構（它會打一次 sysdb）；同名的並行 miss 可能各建一個 handle，兩者等價，後寫入的留下。
+- **`evict()`**（`:69-72`）：目前沒有呼叫端。快取的是 handle 不是資料，collection 被刪除後 handle 會失效；
+  之後加「刪除 user / tenant」功能時，刪 collection 的路徑必須呼叫它。
 
-1. **沒有上限。** 裸 `dict` 會隨 `(user_id, tenant_id)` 組合無限成長。舊版本就建議改用 `cachetools.LRUCache` 或類似的 bounded cache。
-   `Chroma` 物件只是 handle（真正的 HNSW index 由 chromadb 的 segment manager 管），所以單個不大，但仍不該無界。
-2. **cache key 與實際 collection 名稱脫鉤。** key 永遠是 `_{user_id}_{tenant_id}`，但實際名稱依策略而定（`:28,34,40`）。
-   策略 1 / 3 下，同一個實體 collection 會被多個 key 各包一個 wrapper（上圖）。不影響正確性，只是浪費，也讓 cache 大小對齊 user 數而不是 collection 數。
-   修法：讓 `_collection_name()` 直接回傳依策略算出的實際名稱，同時當 key 和建構參數。
-3. **快取的是 handle，不是資料。** collection 被外部刪除後，快取的 handle 會失效，`get_or_create` 的自癒行為就沒了。
-   目前程式沒有刪除 collection 的路徑，所以暫時沒事；之後加「刪除 tenant / user」功能時要一併清 cache。
-
-另外 `self.cache` 的存取沒有 lock。dict 單一操作在 CPython 下是 atomic 的，最壞情況是並行 miss 各建一個 wrapper、後寫的覆蓋前者，結果等價（推論，未實測）。
+驗證：`tests/vectorstore/test_collection_manager.py`（in-memory `EphemeralClient` + 假 embedding）測了三種策略的 handle 對應、LRU 淘汰順序、`evict()` 後會拿到新 handle。
 
 ---
 
