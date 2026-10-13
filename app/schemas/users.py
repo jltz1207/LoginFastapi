@@ -16,6 +16,7 @@ class UserBase(BaseModel):
 # Model for creating a new user (request body)
 class UserCreate(UserBase):
     password: str
+    tenant_slug: str  # tenant must already exist and be ACTIVE
 
 # Model for updating user info (request body)
 class UserUpdate(BaseModel):

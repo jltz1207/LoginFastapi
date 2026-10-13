@@ -41,23 +41,23 @@ class MetadataQueryType(str, Enum):
 _WHITELISTED_QUERIES: dict[MetadataQueryType, str] = {
     MetadataQueryType.BY_AUTHOR: (
         "SELECT id, title, author, created_at FROM document "
-        "WHERE knowledge_base_id = %(knowledge_base_id)s AND author = %(author)s "
+        "WHERE knowledge_base_id = %(knowledge_base_id)s AND tenant_id = %(tenant_id)s AND user_id = %(user_id)s AND author = %(author)s "
         "ORDER BY created_at DESC LIMIT %(limit)s"
     ),
     MetadataQueryType.BY_DATE_RANGE: (
         "SELECT id, title, author, created_at FROM document "
-        "WHERE knowledge_base_id = %(knowledge_base_id)s "
+        "WHERE knowledge_base_id = %(knowledge_base_id)s AND tenant_id = %(tenant_id)s AND user_id = %(user_id)s "
         "AND created_at BETWEEN %(start_date)s AND %(end_date)s "
         "ORDER BY created_at DESC LIMIT %(limit)s"
     ),
     MetadataQueryType.BY_DOCUMENT_TYPE: (
         "SELECT id, title, author, document_type, created_at FROM document "
-        "WHERE knowledge_base_id = %(knowledge_base_id)s AND document_type = %(document_type)s "
+        "WHERE knowledge_base_id = %(knowledge_base_id)s AND tenant_id = %(tenant_id)s AND user_id = %(user_id)s AND document_type = %(document_type)s "
         "ORDER BY created_at DESC LIMIT %(limit)s"
     ),
     MetadataQueryType.BY_VERSION: (
         "SELECT id, title, version, created_at FROM document_chunk "
-        "WHERE knowledge_base_id = %(knowledge_base_id)s AND document_id = %(document_id)s "
+        "WHERE knowledge_base_id = %(knowledge_base_id)s AND tenant_id = %(tenant_id)s AND user_id = %(user_id)s AND document_id = %(document_id)s "
         "ORDER BY version DESC LIMIT %(limit)s"
     ),
 }
@@ -127,11 +127,13 @@ class MetadataBranch:
         sql = _WHITELISTED_QUERIES[request.query_type]
 
         # 順序很重要：先展開 extractor 產出的參數，最後才強制蓋上信任的
-        # knowledge_base_id，這樣即使 extractor 塞了別的 knowledge_base_id 也無效。
+        # knowledge_base_id/tenant_id/user_id，這樣即使 extractor 塞了別的值也無效。
         params = {
             **request.params,
             "limit": self._default_limit,
             "knowledge_base_id": knowledge_base_id,
+            "tenant_id": state.tenant_id,
+            "user_id": state.user_id,
         }
         async with AsyncSessionLocal() as session:
             rows = await session.execute(sql, params)
