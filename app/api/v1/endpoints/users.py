@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from app.db.session import get_db
 from app.models import Tenant, User
 from app.models.tenant import TenantStatus
@@ -82,7 +82,13 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
         hashed_password=hashed_pw
     )
     db.add(db_user)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # The pre-checks above race with concurrent registrations; the unique
+        # constraints on email and (tenant_id, username) are the real guard.
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Email or username already registered") from exc
     await db.refresh(db_user)
 
     token = jwtService.createToken({"email": user.email, "username": user.username})
