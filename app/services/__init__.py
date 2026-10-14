@@ -1,1 +1,1 @@
-from .jwtService import jwtService, JwtService, getCurrentUser
+from .jwtService import jwtService, JwtService, getCurrentUser, ensureTenantActive

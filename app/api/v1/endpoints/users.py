@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.models import Tenant, User
 from app.models.tenant import TenantStatus
 from app.schemas import UserCreate, UserResponse, UserUpdate, UserLogin
-from app.services import jwtService, getCurrentUser
+from app.services import jwtService, getCurrentUser, ensureTenantActive
 import bcrypt
 
 router = APIRouter(tags=["Users"])
@@ -25,12 +25,20 @@ async def login(loginModel: UserLogin, db: AsyncSession = Depends(get_db)):
     if loginModel.email:
         stmt = select(User).where(User.email == loginModel.email)
     elif loginModel.username:
-        stmt = select(User).where(User.username == loginModel.username)
+        # username is only unique within a tenant, so it needs the tenant to pick one user.
+        if not loginModel.tenant_slug:
+            raise HTTPException(status_code=400, detail="tenant_slug is required when logging in with username")
+        stmt = (
+            select(User)
+            .join(Tenant, Tenant.id == User.tenant_id)
+            .where(User.username == loginModel.username, Tenant.slug == loginModel.tenant_slug)
+        )
     exist_user = (await db.execute(stmt)).scalars().first()
     if not exist_user:
         raise HTTPException(status_code=404, detail="User not found")
 
     if bcrypt.checkpw(loginModel.password.encode('utf-8'), exist_user.hashed_password.encode('utf-8')):
+        await ensureTenantActive(db, exist_user.tenant_id)
         payload = {"email": exist_user.email, "username": exist_user.username}
         token = jwtService.createToken(payload)
         pydantic_user = UserResponse.model_validate(exist_user)
@@ -59,6 +67,10 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
     tenant = (await db.execute(tenant_stmt)).scalars().first()
     if not tenant:
         raise HTTPException(status_code=400, detail="Unknown or inactive tenant")
+
+    username_stmt = select(User.id).where(User.tenant_id == tenant.id, User.username == user.username)
+    if (await db.execute(username_stmt)).first():
+        raise HTTPException(status_code=400, detail="Username already taken in this tenant")
 
     hashed_pw = hash_password(user.password)
     db_user = User(
@@ -115,6 +127,11 @@ async def update_user(user: UserUpdate, db: AsyncSession = Depends(get_db), curr
     exist_user.first_name = user.first_name
     exist_user.last_name = user.last_name
     exist_user.full_name = exist_user.first_name + " " + exist_user.last_name
+    username_stmt = select(User.id).where(
+        User.tenant_id == exist_user.tenant_id, User.username == user.username, User.id != exist_user.id
+    )
+    if (await db.execute(username_stmt)).first():
+        raise HTTPException(status_code=400, detail="Username already taken in this tenant")
     exist_user.username = user.username
     await db.commit()
     return exist_user

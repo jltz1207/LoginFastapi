@@ -31,6 +31,7 @@ class UserUpdate(BaseModel):
 class UserLogin(BaseModel):
     email: Optional[EmailStr] = None
     username: Optional[str] = None
+    tenant_slug: Optional[str] = None  # required with username, which is only unique per tenant
     password: str
 
 # Model for user response (API response)

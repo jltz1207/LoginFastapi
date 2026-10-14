@@ -6,7 +6,8 @@ from fastapi import Depends, HTTPException, status
 from app.db import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.models import User
+from app.models import Tenant, User
+from app.models.tenant import TenantStatus
 
 oauth2Scheme = OAuth2PasswordBearer(tokenUrl="token")
 class JwtService:
@@ -36,5 +37,17 @@ async def getCurrentUser(token: str = Depends(oauth2Scheme), db: AsyncSession = 
   user = (await db.execute(select(User).where(User.email == payloadEmail))).scalars().first()
   if not user:
     raise credentials_exception
+  # Checked on every request, not only at login: a token issued before the tenant was
+  # suspended must stop working too.
+  await ensureTenantActive(db, user.tenant_id)
 
   return user
+
+async def ensureTenantActive(db: AsyncSession, tenant_id) -> None:
+  stmt = select(Tenant.id).where(
+    Tenant.id == tenant_id,
+    Tenant.status == TenantStatus.ACTIVE,
+    Tenant.deleted_at.is_(None),
+  )
+  if (await db.execute(stmt)).first() is None:
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant is not active")
