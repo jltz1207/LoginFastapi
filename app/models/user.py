@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import UUID, Boolean, DateTime, String
+from sqlalchemy import UUID, Boolean, DateTime, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -11,6 +11,8 @@ from app.db.session import Base
 
 class User(Base):
     __tablename__ = "users"
+    # username is only unique within a tenant (login by username needs tenant_slug).
+    __table_args__ = (UniqueConstraint("tenant_id", "username", name="uq_users_tenant_id_username"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

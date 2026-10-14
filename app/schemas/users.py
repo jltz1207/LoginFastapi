@@ -16,6 +16,7 @@ class UserBase(BaseModel):
 # Model for creating a new user (request body)
 class UserCreate(UserBase):
     password: str
+    tenant_slug: str  # tenant must already exist and be ACTIVE
 
 # Model for updating user info (request body)
 class UserUpdate(BaseModel):
@@ -30,11 +31,13 @@ class UserUpdate(BaseModel):
 class UserLogin(BaseModel):
     email: Optional[EmailStr] = None
     username: Optional[str] = None
+    tenant_slug: Optional[str] = None  # required with username, which is only unique per tenant
     password: str
 
 # Model for user response (API response)
 class UserResponse(BaseModel):
     id: UUID
+    tenant_id: UUID
     email: EmailStr
     username: str
     is_active: bool

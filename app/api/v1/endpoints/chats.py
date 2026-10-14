@@ -17,6 +17,7 @@ from app.models.asistantMessage import AsistantMessage, RoleEnum
 from app.models.user import User
 from app.schemas.chats import ChatRequestModel
 from app.services.jwtService import getCurrentUser
+from app.services.knowledgeBaseService import get_owned_knowledge_base
 
 from langgraph.graph.state import CompiledStateGraph
 import traceback
@@ -36,6 +37,7 @@ async def chat(
     current_user: User = Depends(getCurrentUser),
     graph: CompiledStateGraph = Depends(get_compiled_graph)
 ):
+    await get_owned_knowledge_base(db, requestModel.knowledge_base_id, current_user)
     clean_user_question = requestModel.question.strip()
     init_state = LookupAgentState(
         user_id=str(current_user.id),
@@ -94,6 +96,7 @@ async def chat(
 
         new_user_msg = AsistantMessage(
             user_id=current_user.id,
+            tenant_id=current_user.tenant_id,
             knowledge_base_id=requestModel.knowledge_base_id,
             sequence_number=max_seq_num + 1,
             role=RoleEnum.USER,
@@ -101,6 +104,7 @@ async def chat(
         )
         new_ai_msg = AsistantMessage(
             user_id=current_user.id,
+            tenant_id=current_user.tenant_id,
             knowledge_base_id=requestModel.knowledge_base_id,
             sequence_number=max_seq_num + 2,
             role=RoleEnum.AI,

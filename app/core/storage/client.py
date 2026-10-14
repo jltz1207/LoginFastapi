@@ -8,10 +8,12 @@ your .env without touching anything else.
 
 Directory layout on disk:
     STORAGE_ROOT/
-    └── users/
-        └── {user_id}/
-            └── {knowledge_base_id}/
-                └── {unique_prefix}_{filename}
+    └── tenants/
+        └── {tenant_id}/
+            └── users/
+                └── {user_id}/
+                    └── {knowledge_base_id}/
+                        └── {unique_prefix}_{filename}
 """
 
 from pathlib import Path

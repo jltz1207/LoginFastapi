@@ -10,18 +10,19 @@ MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
  
 # ── key / path helpers ────────────────────────────────────────────────────────
  
-def _build_storage_key(user_id: str, knowledge_base_id: str, filename: str) -> str:
+def _build_storage_key(tenant_id: str, user_id: str, knowledge_base_id: str, filename: str) -> str:
     """
     Relative path used as the storage key.
-    e.g. users/usr_123/kb_456/f47ac10b_contract.pdf
+    e.g. tenants/tnt_789/users/usr_123/kb_456/f47ac10b_contract.pdf
  
-    Namespaced so files are logically isolated per user and KB, mirroring
-    the same isolation contract as the vectorstore (user_id → collection,
-    knowledge_base_id → metadata filter).
+    Namespaced so files are logically isolated per tenant, user and KB, mirroring
+    the same isolation contract as the vectorstore (tenant_id → collection,
+    tenant/user/knowledge_base_id → metadata filter). The tenant prefix also lets
+    an S3 lifecycle rule or a tenant offboarding job target one tenant's files.
     """
     unique = uuid.uuid4().hex[:8]
     safe_name = Path(filename).name  # strip any path traversal attempts
-    return f"users/{user_id}/{knowledge_base_id}/{unique}_{safe_name}"
+    return f"tenants/{tenant_id}/users/{user_id}/{knowledge_base_id}/{unique}_{safe_name}"
  
  
 def _resolve_path(storage_key: str) -> Path:
@@ -29,6 +30,7 @@ def _resolve_path(storage_key: str) -> Path:
     return get_storage_root() / storage_key
 
 def upload_file(
+    tenant_id: str,
     user_id: str,
     knowledge_base_id: str,
     file_bytes: bytes,
@@ -42,7 +44,7 @@ def upload_file(
     document row in Postgres. storage_bucket is the storage root path so the
     file can always be located even if STORAGE_ROOT changes between deploys.
     """
-    key = _build_storage_key(user_id, knowledge_base_id, filename)
+    key = _build_storage_key(tenant_id, user_id, knowledge_base_id, filename)
     abs_path = _resolve_path(key)
  
     # ensure the per-KB directory exists
@@ -52,6 +54,7 @@ def upload_file(
  
     logger.info(
         "file_uploaded_local",
+        tenant_id=tenant_id,
         user_id=user_id,
         knowledge_base_id=knowledge_base_id,
         path=str(abs_path),

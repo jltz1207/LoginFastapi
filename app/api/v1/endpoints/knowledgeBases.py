@@ -19,6 +19,7 @@ from app.schemas import  DocumentUploadResponse
 from app.schemas.documents import DocumentResponse
 from app.schemas.knowledgeBases import KnowledgeBaseCreateRequest, KnowledgeBaseCreateResponse, QueryAsistantRequest, QueryAsistantResponse
 from app.services import jwtService, getCurrentUser
+from app.services.knowledgeBaseService import get_owned_knowledge_base
 from app.utils.token_counter import count_tokens
 from app.vectorstore import get_vector_store_indexer
 from fastapi import UploadFile
@@ -37,6 +38,7 @@ async def createKnowledgeBase(requestModel: KnowledgeBaseCreateRequest, db: Asyn
       raise HTTPException(status_code=500, detail=f"Title '{trim_title}' is used.")
     new_kb = AsistantKnowledgeBase(
       user_id=current_user.id,
+      tenant_id=current_user.tenant_id,
       title=requestModel.title,
     )
     db.add(new_kb)
@@ -58,6 +60,9 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
 
   # check bytes
   # check extension, inside [pdf,docx]
+  # Outside the try: its `except Exception` would turn this 404 into a 500.
+  kb = await get_owned_knowledge_base(db, knowledge_base_id, current_user)
+  knowledge_base_id = str(kb.id)
   try:
     # Chroma metadata values must be str/int/float/bool — a UUID object is rejected,
     # and a UUID that slips into a `where` filter matches nothing without raising.
@@ -100,7 +105,7 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
     
     factory.print_chunks_transformation(document_list, chunking_list)
     # handle upload process
-    result =  upload_file(current_user.id, knowledge_base_id, file_bytes, file.filename, file.content_type)
+    result =  upload_file(current_user.tenant_id, current_user.id, knowledge_base_id, file_bytes, file.filename, file.content_type)
     storage_bucket = result.get("storage_bucket")
     storage_key = result.get("storage_key")
     if not storage_bucket or not storage_key:
@@ -113,6 +118,7 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
     new_doc = Document(
       knowledge_base_id=knowledge_base_id,
       user_id = current_user.id,
+      tenant_id = current_user.tenant_id,
       filename = Path(file.filename).name,
       file_extension = file_ext,
       mime_type = file.content_type,
@@ -141,6 +147,7 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
 @router.post("/query", response_model=QueryAsistantResponse)
 async def query(model: QueryAsistantRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(getCurrentUser)):
 
+    await get_owned_knowledge_base(db, model.knoweldge_base_id, current_user)
     pipeline_runnable = create_pipeline(
         tenant_id=str(current_user.tenant_id),
         user_id=str(current_user.id),
