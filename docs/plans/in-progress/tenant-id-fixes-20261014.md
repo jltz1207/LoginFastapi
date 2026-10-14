@@ -65,13 +65,13 @@ flowchart LR
 
 4 個 table 是 `users`、`AsistantKnowledgeBases`、`AsistantMessages`、`documents`。先加 nullable column 再 backfill，最後才改成 NOT NULL，所以已經有資料的 DB 也能直接跑。
 
-> ⚠️ 未在實際 DB 上執行過。如果 DB 曾經手動加過 `tenant_id`，`add_column` 會失敗。
+> ✅ 2026-10-14 已在 dev DB 執行，並在最後加上 `(tenant_id, username)` unique constraint。其他環境如果曾經手動加過 `tenant_id`，`add_column` 會失敗；某個 tenant 內有重複的 username 時，unique constraint 也會失敗。
 
 ---
 
 ## 🟠 High：缺少 tenant scoping
 
-> **狀態：✅ 已完成（commit `341b4ba`）。H3 的 branch 本身仍跑不起來，見〈待辦〉。**
+> **狀態：✅ 已完成（commit `341b4ba`）。Metadata branch 本身跑不起來的問題（table／column 名稱錯誤、raw SQL 用法）不在這個 plan 的範圍，會在另一個 branch 處理。**
 
 | # | 問題 | 修正 |
 |---|---|---|
@@ -137,15 +137,29 @@ flowchart TD
 |---|---|
 | 改過的 modules `py_compile` 與 import | ✅ |
 | `tests/scripts`（含新增 6 個 `test_migrate_to_tenant_collections.py`） | ✅ 11 passed |
-| 全部 tests | 32 passed、11 failed |
+| `tests/auth/test_tenant_scoping.py`（新增 17 個） | ✅ 17 passed |
+| 全部 tests | ✅ 60 passed |
+| Dev DB 套用 migration（`061f06c4ef78` → `31f17fb47de8`） | ✅ |
+| `alembic check`：tenant 與 `summary` 相關的 schema 和 model 一致 | ✅ |
 
-11 個 failed 都在 `tests/rag/`，原因是 `ModuleNotFoundError: No module named 'rank_bm25'`。`rank_bm25` 和 `flashrank` 都沒列在 `pyproject.toml`，所以新建的 venv 不會有。失敗的 tests 都在這次沒有動過的 `app/rag`，和這次的修改無關。
+一開始全部 tests 是 32 passed、11 failed，失敗的都在 `tests/rag/`，原因是 `rank_bm25` 沒裝。把 `rank-bm25`、`flashrank` 加進 `pyproject.toml` 後，全部通過。
+
+### Auth tests 的做法
+
+測試環境沒有 `pytest-asyncio`，也沒有 `aiosqlite`。所以用 `asyncio.run` 直接呼叫 endpoint function，搭配一個假的 `AsyncSession`：它記下每一個送出的 statement，並回傳預先設定好的結果。測試檢查的是**送出了哪些 WHERE 條件**，也就是 tenant 邊界有沒有帶上，而不是查詢的結果。
+
+做過一次 mutation check：拿掉 `get_users` 的 `tenant_id` filter 之後，`test_list_users_is_scoped_to_caller_tenant` 會失敗，確認 test 真的抓得到漏掉的 tenant 條件。
+
+### Dev DB 套用前的狀態（2026-10-14 實測）
+
+- 停在 `061f06c4ef78`，4 個 table 都沒有 `tenant_id`，`documents` 也沒有 `summary`。
+- 資料：1 個 user、1 個 KB、1 份文件、0 則訊息，沒有重複的 username。
+- 套用前先用 `alembic upgrade --sql` 看過產生的 SQL：兩支 migration 包在同一個 transaction 裡。
 
 **未驗證**：
 
 - 沒有實際啟動 API 跑過 register、login、upload、chat。
-- Auth 相關的修改（H1、H2、H4、M3、M4）沒有 test 覆蓋。
-- Migration 沒有在實際 DB 上執行過。
+- 還沒有跑 `migrate_to_tenant_collections`（見〈部署順序〉）。
 
 ## 部署順序
 
@@ -163,27 +177,25 @@ Script 要讀 `users.tenant_id`，所以一定要先跑 migration。
 
 ## 待辦
 
-### 🟠 H3 的尾巴：metadata branch 本身跑不起來
+> **狀態：原本 5 項都已處理（2026-10-14，未 commit）。**
 
-Tenant 條件已經加上去，但這個 branch 實際上還沒被保護到，因為它根本跑不起來：
+- [x] **Migration 已在 dev DB 執行**，目前在 `31f17fb47de8 (head)`。⚠️ 但兩支 migration 檔（`b6019841bba0_add_tenants.py`、`31f17fb47de8_add_documents_summary.py`）還只在 worktree 的 `migrations/versions/` 裡，因為 worktree 隔離不能寫到 main checkout。**要手動複製過去**，否則在 main checkout 跑 alembic 會出現 `Can't locate revision`。
+- [x] **`(tenant_id, username)` unique constraint**：`User` model 加上 `uq_users_tenant_id_username`，migration `b6019841bba0` 也一起建。`register` 在 commit 時接住 `IntegrityError` 並回 400，處理兩個 request 同時註冊同名的情況。
+- [x] **`documents.summary`**：DB 確實沒有這個 column，新增 migration `31f17fb47de8` 補上。這和 tenant 無關，所以分成另一支。
+- [x] **Auth tests**：新增 `tests/auth/test_tenant_scoping.py`，共 17 個，涵蓋 H1、H2、H4、M3、M4 和 register 的 race condition。
+- [x] **`pyproject.toml`**：加上 `rank-bm25==0.2.2`、`flashrank==0.2.10`，`uv.lock` 也一起更新。Main checkout 的 `.venv` 裡也沒有這兩個 package，而 `reranker.py` 在 module 層級就 import `flashrank`，所以之前的 app 很可能根本無法啟動（推論，未實測）。
 
-- Table 名寫成 `document`、`document_chunk`，實際是 `documents`；`document_chunk` 這個 table 不存在。
-- `title`、`author`、`document_type`、`version` 這些 column 在 `Document` model 裡都沒有。
-- Raw SQL 沒有包 `text()`，參數又用 psycopg 的 `%(x)s` 格式，SQLAlchemy 不接受。
+### 新發現（不在這個 plan 的範圍）
 
-這需要重新設計查詢類型（BY_AUTHOR、BY_VERSION 在現有 schema 下沒有資料可查），要先決定方向。建議改成用 `documents` 現有的欄位查，例如 `filename`、`file_extension`、`created_dt`、`status`，並改用 SQLAlchemy `select()`。
+`alembic check` 還報了幾個和 tenant 無關、原本就存在的差異：
 
-### 其他
-
-- [ ] 把 migration 複製到 main checkout 並執行。
-- [ ] DB 加上 `(tenant_id, username)` unique constraint。目前只在 application 層檢查，兩個 request 同時註冊同名時還是可能都通過。
-- [ ] Init migration 漏了 `documents.summary` column（model 有，`global_summary` branch 會查它），要先確認 DB 的實際狀態再補。
-- [ ] 補 auth 相關的 tests。
-- [ ] 把 `rank_bm25`、`flashrank` 加進 `pyproject.toml`。
+- 4 個 status／role 欄位在 DB 是 PostgreSQL native ENUM，但 model 宣告 `native_enum=False`。
+- DB 有 `ix_documents_status` 這個 index，model 沒有宣告。
+- `checkpoint_*` 這幾個 table 由 LangGraph 管理，不在 model 裡，這是預期的。之後如果要用 autogenerate，`env.py` 需要設定 `include_object` 把它們排除，否則 autogenerate 會產生刪除這幾個 table 的指令。
 
 ### 🟢 Low（不影響安全）
 
-> **狀態：L1、L3、L4 ✅ 已完成（2026-10-14，未 commit）。L2 決定不改。**
+> **狀態：L1、L3、L4 ✅ 已完成（commit `71b3225`）。L2 決定不改。**
 
 - [x] **L1**：storage key 從 `users/{user_id}/...` 改成 `tenants/{tenant_id}/users/{user_id}/{kb_id}/...`，`upload_file()` 多了 `tenant_id` 參數。以後換成 S3 時，可以用 prefix 對單一 tenant 做 lifecycle 或刪除。已上傳的檔案不需要搬移，因為 `documents.storage_key` 存的是完整 key，`download_file()` 照 DB 裡的 key 去讀。
 - [x] **L3**：`UserResponse`、`KnowledgeBaseCreateResponse`、`DocumentResponse` 都加上 `tenant_id`。
