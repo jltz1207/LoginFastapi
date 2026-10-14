@@ -136,9 +136,9 @@ flowchart TD
 | 項目 | 結果 |
 |---|---|
 | 改過的 modules `py_compile` 與 import | ✅ |
-| `tests/scripts`（含新增 6 個 `test_migrate_to_tenant_collections.py`） | ✅ 11 passed |
+| `tests/scripts`（含新增 8 個 `test_migrate_to_tenant_collections.py`） | ✅ 13 passed |
 | `tests/auth/test_tenant_scoping.py`（新增 17 個） | ✅ 17 passed |
-| 全部 tests | ✅ 60 passed |
+| 全部 tests | ✅ 62 passed |
 | Dev DB 套用 migration（`061f06c4ef78` → `31f17fb47de8`） | ✅ |
 | `alembic check`：tenant 與 `summary` 相關的 schema 和 model 一致 | ✅ |
 
@@ -156,30 +156,50 @@ flowchart TD
 - 資料：1 個 user、1 個 KB、1 份文件、0 則訊息，沒有重複的 username。
 - 套用前先用 `alembic upgrade --sql` 看過產生的 SQL：兩支 migration 包在同一個 transaction 裡。
 
-**未驗證**：
-
-- 沒有實際啟動 API 跑過 register、login、upload、chat。
-- 還沒有跑 `migrate_to_tenant_collections`（見〈部署順序〉）。
-
 ## 部署順序
 
 ```mermaid
 flowchart LR
     A["複製 migration 到<br/>main checkout"] --> B["alembic upgrade head"]
-    B --> C["migrate_to_tenant_collections<br/>dry run"]
+    B --> V["migrate_collection_names<br/>--apply"]
+    V --> C["migrate_to_tenant_collections<br/>dry run"]
     C --> D["確認報告後<br/>--apply"]
     D --> E["重啟 app<br/>（重建 BM25 cache）"]
 ```
 
-Script 要讀 `users.tenant_id`，所以一定要先跑 migration。
+- Script 要讀 `users.tenant_id` 和 `AsistantKnowledgeBases.tenant_id`，所以一定要先跑 migration。
+- `migrate_to_tenant_collections` 只讀有 `EMBEDDING_VERSION` 段的 collection。舊格式的 `{NAME}_{user_id}` 要先用 `migrate_collection_names` 補上版本段。
+
+### Dev 環境實際執行結果（2026-10-14）
+
+部署時發現 script 原本沒考慮到兩種情況：
+
+1. **Collection 是舊格式**：只有 `user_knowledge_base_{user_id}`，沒有 `_v1`。所以 `migrate_to_tenant_collections` 第一次 dry run 顯示 `nothing to migrate`，要先跑 `migrate_collection_names`。
+2. **Chunk 的 metadata 只有 `knowledge_base_id`，沒有 `user_id`**：這是更早期 ingest 的資料。`scope_filter()` 本來就要求 `user_id`，所以這 4 筆在這次修改之前就已經查不到了。
+
+因此 script 改成先用 `knowledge_base_id` 查 `AsistantKnowledgeBases`，找出擁有者，同時補上 `user_id` 和 `tenant_id`；查不到 KB 才退回用 `user_id` 查 `users`。如果 chunk 的 `user_id` 和 KB 擁有者不同，就跳過並列入報告，不把它歸給 KB 擁有者，否則會讓沒上傳過這份資料的 user 看到它。新增 2 個 tests 覆蓋這兩條路徑。
+
+執行步驟與結果：
+
+| 步驟 | 結果 |
+|---|---|
+| 備份 `chroma_data/`（386K） | ✅ 備份在 session 的 scratchpad |
+| `migrate_collection_names --apply` | `user_knowledge_base_{user_id}` → `user_knowledge_base_v1_{user_id}`，4 筆 |
+| `migrate_to_tenant_collections` dry run | 4 筆會搬到 `user_knowledge_base_v1_{tenant_id}`，0 筆跳過 |
+| `migrate_to_tenant_collections --apply` | 4 筆，每筆都有 `user_id`、`tenant_id` |
+| 用 app 的 `StoreIndexer.get_all_documents_in_kb()` 驗證 | 自己的 scope：4 筆；換一個 tenant_id：0 筆 |
+
+另外，main checkout 的 `.venv` 裡 `psycopg2-binary` 只有 dist-info、沒有 package 目錄，`alembic current` 會報 `No module named 'psycopg2'`。用 `uv sync --reinstall-package psycopg2-binary` 修好。
+
+舊的兩個 collection（`user_knowledge_base_{user_id}`、`user_knowledge_base_v1_{user_id}`）還留著，確認 app 正常後可以手動刪除。
 
 ---
 
 ## 待辦
 
-> **狀態：原本 5 項都已處理（2026-10-14，未 commit）。**
+> **狀態：全部完成（commit `f422db0`，2026-10-14 部署到 dev 環境）。**
 
-- [x] **Migration 已在 dev DB 執行**，目前在 `31f17fb47de8 (head)`。⚠️ 但兩支 migration 檔（`b6019841bba0_add_tenants.py`、`31f17fb47de8_add_documents_summary.py`）還只在 worktree 的 `migrations/versions/` 裡，因為 worktree 隔離不能寫到 main checkout。**要手動複製過去**，否則在 main checkout 跑 alembic 會出現 `Can't locate revision`。
+- [x] **Migration 已在 dev DB 執行**，目前在 `31f17fb47de8 (head)`。兩支 migration 檔（`b6019841bba0_add_tenants.py`、`31f17fb47de8_add_documents_summary.py`）已複製到 main checkout 的 `migrations/versions/`。`migrations/` 被 gitignore，所以它們不在 git 裡。
 - [x] **`(tenant_id, username)` unique constraint**：`User` model 加上 `uq_users_tenant_id_username`，migration `b6019841bba0` 也一起建。`register` 在 commit 時接住 `IntegrityError` 並回 400，處理兩個 request 同時註冊同名的情況。
 - [x] **`documents.summary`**：DB 確實沒有這個 column，新增 migration `31f17fb47de8` 補上。這和 tenant 無關，所以分成另一支。
 - [x] **Auth tests**：新增 `tests/auth/test_tenant_scoping.py`，共 17 個，涵蓋 H1、H2、H4、M3、M4 和 register 的 race condition。
