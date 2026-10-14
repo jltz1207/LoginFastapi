@@ -37,6 +37,7 @@ class UserLogin(BaseModel):
 # Model for user response (API response)
 class UserResponse(BaseModel):
     id: UUID
+    tenant_id: UUID
     email: EmailStr
     username: str
     is_active: bool

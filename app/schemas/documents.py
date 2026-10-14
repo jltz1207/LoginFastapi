@@ -10,6 +10,7 @@ from app.models.document import IngestionStatus
 class DocumentResponse(BaseModel):
   id:UUID
   knowledge_base_id: UUID
+  tenant_id: UUID
   user_id: UUID
   filename: str
   file_extension: str

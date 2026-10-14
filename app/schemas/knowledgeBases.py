@@ -13,6 +13,7 @@ class KnowledgeBaseCreateRequest(BaseModel):
 
 class KnowledgeBaseCreateResponse(BaseModel):
     id: UUID # Automatically validates that the client sent a real UUID string
+    tenant_id:UUID
     user_id:UUID
     title:str
     status:str #enum to str

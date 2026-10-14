@@ -105,7 +105,7 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
     
     factory.print_chunks_transformation(document_list, chunking_list)
     # handle upload process
-    result =  upload_file(current_user.id, knowledge_base_id, file_bytes, file.filename, file.content_type)
+    result =  upload_file(current_user.tenant_id, current_user.id, knowledge_base_id, file_bytes, file.filename, file.content_type)
     storage_bucket = result.get("storage_bucket")
     storage_key = result.get("storage_key")
     if not storage_bucket or not storage_key:
