@@ -102,3 +102,29 @@ def test_rerun_is_idempotent(client_and_base):
     migrate(client, base, "v1", USERS, apply=True)
 
     assert client.get_collection(f"{base}_v1_t1", embedding_function=None).count() == 2
+
+
+KB_OWNERS = {"kb-1": ("u1", "t1")}
+
+
+def test_records_without_user_id_are_resolved_through_the_kb_owner(client_and_base):
+    # Early ingests stored only knowledge_base_id; scope_filter() also needs user_id.
+    client, base = client_and_base
+    _seed(client, f"{base}_v1_u1", [None, None])
+
+    moved, skipped = migrate(client, base, "v1", USERS, apply=True, kb_owners=KB_OWNERS)
+
+    assert not skipped
+    records = _records(client, f"{base}_v1_t1")
+    assert len(records) == 2
+    assert {(m["user_id"], m["tenant_id"]) for m in records.values()} == {("u1", "t1")}
+
+
+def test_record_from_another_user_is_not_handed_to_the_kb_owner(client_and_base):
+    client, base = client_and_base
+    _seed(client, f"{base}_v1_u3", ["u3"])  # u3 wrote into u1's KB
+
+    moved, skipped = migrate(client, base, "v1", USERS, apply=True, kb_owners=KB_OWNERS)
+
+    assert skipped[f"{base}_v1_u3"] == 1
+    assert not moved

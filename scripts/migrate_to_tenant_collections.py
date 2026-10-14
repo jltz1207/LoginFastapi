@@ -7,16 +7,25 @@ Two gaps left over from the switch to PARTITION_METHOD=3 (one collection per ten
 2. Data still sits in per-user (`{NAME}_{VER}_{user_id}`) or global (`{NAME}_{VER}`)
    collections, while the app now only reads `{NAME}_{VER}_{tenant_id}`.
 
-Every record in every collection of the current EMBEDDING_VERSION is assigned to a
-tenant via its `user_id` metadata and the `users` table (the DB is the source of truth;
-an existing `tenant_id` in metadata is overwritten). It is then upserted, with
-`tenant_id` set, into that tenant's collection. Records already in the right collection
-are updated in place, so the script can be re-run safely. Records with no `user_id`, or
-one that is not in the DB, are skipped and reported.
+Every record in every collection of the current EMBEDDING_VERSION is assigned an owner
+(user_id, tenant_id) from the DB, which is the source of truth (existing values in
+metadata are overwritten):
+
+- by its `knowledge_base_id` and the `AsistantKnowledgeBases` table, which also fills
+  in `user_id` for early chunks that were ingested without one;
+- otherwise by its `user_id` and the `users` table.
+
+It is then upserted, with `user_id` and `tenant_id` set, into that tenant's collection.
+Records already in the right collection are updated in place, so the script can be
+re-run safely. Records that cannot be resolved are skipped and reported, and so is a
+record whose `user_id` differs from its KB's owner: handing it to the owner would
+expose it to a user who never uploaded it.
 
 Vectors are copied as-is (no re-embedding). Source collections are left in place;
 delete them by hand once the new ones are verified. Run the Alembic migration that adds
-`users.tenant_id` first, and restart the app afterwards so the BM25 cache is rebuilt.
+`tenant_id` first, and restart the app afterwards so the BM25 cache is rebuilt.
+Collections without an EMBEDDING_VERSION segment (`{NAME}_{user_id}`) are not read:
+run `scripts.migrate_collection_names --apply` before this script.
 
 Usage (from the repo root; dry run unless --apply):
 
@@ -39,6 +48,19 @@ def source_collections(collection_names: list[str], base_name: str, version: str
     )
 
 
+def resolve_owner(
+    metadata: dict, user_to_tenant: dict[str, str], kb_owners: dict[str, tuple[str, str]]
+) -> tuple[str, str] | None:
+    """(user_id, tenant_id) for a record, or None when it must be skipped."""
+    record_user = metadata.get("user_id")
+    owner = kb_owners.get(metadata.get("knowledge_base_id"))
+    if owner is not None:
+        return owner if record_user in (None, owner[0]) else None
+    if record_user in user_to_tenant:
+        return record_user, user_to_tenant[record_user]
+    return None
+
+
 def migrate(
     client,
     base_name: str,
@@ -46,9 +68,11 @@ def migrate(
     user_to_tenant: dict[str, str],
     apply: bool,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    kb_owners: dict[str, tuple[str, str]] | None = None,
 ) -> tuple[Counter, Counter]:
     """Returns (moved, skipped): moved[(source, target)] and skipped[source] record counts."""
     versioned_base = f"{base_name}_{version}"
+    kb_owners = kb_owners or {}
     moved: Counter = Counter()
     skipped: Counter = Counter()
     expected_ids: dict[str, set[str]] = defaultdict(set)
@@ -65,16 +89,18 @@ def migrate(
             for record_id, embedding, document, metadata in zip(
                 batch["ids"], batch["embeddings"], batch["documents"], batch["metadatas"]
             ):
-                tenant_id = user_to_tenant.get((metadata or {}).get("user_id"))
-                if tenant_id is None:
+                metadata = metadata or {}
+                owner = resolve_owner(metadata, user_to_tenant, kb_owners)
+                if owner is None:
                     skipped[source_name] += 1
                     continue
+                user_id, tenant_id = owner
                 target_name = f"{versioned_base}_{tenant_id}"
                 group = by_target[target_name]
                 group["ids"].append(record_id)
                 group["embeddings"].append(embedding)
                 group["documents"].append(document)
-                group["metadatas"].append({**metadata, "tenant_id": tenant_id})
+                group["metadatas"].append({**metadata, "user_id": user_id, "tenant_id": tenant_id})
                 moved[(source_name, target_name)] += 1
                 expected_ids[target_name].add(record_id)
 
@@ -97,23 +123,27 @@ def migrate(
         arrow = "(in place)" if source_name == target_name else f"-> {target_name}"
         print(f"{verb}  {source_name} {arrow} ({count} records)")
     for source_name, count in sorted(skipped.items()):
-        print(f"SKIPPED {source_name}: {count} records with no user_id or an unknown user_id")
+        print(f"SKIPPED {source_name}: {count} records with no resolvable owner, or a user_id that differs from the KB owner")
     if not moved and not skipped:
         print("nothing to migrate")
     return moved, skipped
 
 
-def load_user_to_tenant(database_url: str) -> dict[str, str]:
+def load_ownership(database_url: str) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+    """Returns (user_to_tenant, kb_owners) from the DB."""
     from sqlalchemy import create_engine, text
 
     engine = create_engine(database_url)
     try:
         with engine.connect() as conn:
-            rows = conn.execute(text("SELECT id, tenant_id FROM users")).all()
+            users = conn.execute(text("SELECT id, tenant_id FROM users")).all()
+            kbs = conn.execute(text('SELECT id, user_id, tenant_id FROM "AsistantKnowledgeBases"')).all()
     finally:
         engine.dispose()
     # Chroma metadata stores ids as str (see docs/id-type-convention-20260827.md).
-    return {str(user_id): str(tenant_id) for user_id, tenant_id in rows}
+    user_to_tenant = {str(user_id): str(tenant_id) for user_id, tenant_id in users}
+    kb_owners = {str(kb_id): (str(user_id), str(tenant_id)) for kb_id, user_id, tenant_id in kbs}
+    return user_to_tenant, kb_owners
 
 
 def main() -> None:
@@ -136,10 +166,10 @@ def main() -> None:
     if not os.path.isdir(settings.CHROMA_PERSIST_DIRECTORY):
         raise SystemExit(f"Chroma directory not found: {os.path.abspath(settings.CHROMA_PERSIST_DIRECTORY)}")
     client = chromadb.PersistentClient(path=settings.CHROMA_PERSIST_DIRECTORY)
-    user_to_tenant = load_user_to_tenant(settings.DATABASE_URL)
+    user_to_tenant, kb_owners = load_ownership(settings.DATABASE_URL)
     print(
         f"chroma: {settings.CHROMA_PERSIST_DIRECTORY}  base: {settings.COLLECTION_NAME}  "
-        f"version: {settings.EMBEDDING_VERSION}  users: {len(user_to_tenant)}"
+        f"version: {settings.EMBEDDING_VERSION}  users: {len(user_to_tenant)}  kbs: {len(kb_owners)}"
     )
     migrate(
         client,
@@ -148,6 +178,7 @@ def main() -> None:
         user_to_tenant,
         apply=args.apply,
         batch_size=args.batch_size,
+        kb_owners=kb_owners,
     )
 
 
