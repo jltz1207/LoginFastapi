@@ -9,6 +9,7 @@
       "Read(./**/*credentials*.json)"
     ]
   },
+  "worktree": { "baseRef": "head" },
   "hooks": {
     "PreToolUse": [
       {
