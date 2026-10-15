@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import os
 
@@ -6,8 +7,8 @@ class Settings(BaseSettings):
     # Required, no default: set it in .env.dev / .env.prod so credentials never live in code.
     DATABASE_URL: str
 
-    # Optional: JWT secret, etc.
-    SECRET_KEY: str = "a-string-secret-at-least-256-bits-long"
+    # Required, no default: signs JWTs (HS256), so it must be secret and at least 256 bits.
+    SECRET_KEY: str = Field(min_length=32)
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 120
 
