@@ -130,6 +130,7 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
       token_count = token_count,
       raw_text = "\n.".join(chunking_list_str),
       page_count = page_count,
+      created_by = current_user.username,
     )
     db.add(new_doc)
     await db.commit()
