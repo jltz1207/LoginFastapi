@@ -1,4 +1,4 @@
-"""METADATA 分支：白名單參數化查詢，查 PostgreSQL 的 `document`/`document_chunk`。
+"""METADATA 分支：白名單參數化查詢，查 PostgreSQL 的 `documents`。
 
 **禁止 text-to-SQL**：SQL 文字全部是模組層級的固定常數（`_WHITELISTED_QUERIES`），
 從使用者輸入到最終執行之間唯一允許變動的是「選哪一個白名單查詢」+「綁定參數」，
@@ -17,6 +17,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from app.db.session import AsyncSessionLocal
 from app.llm.factory import LLMFactory
@@ -31,34 +32,39 @@ _DEFAULT_LIMIT = 20
 
 
 class MetadataQueryType(str, Enum):
-    BY_AUTHOR = "BY_AUTHOR"
     BY_DATE_RANGE = "BY_DATE_RANGE"
     BY_DOCUMENT_TYPE = "BY_DOCUMENT_TYPE"
     BY_VERSION = "BY_VERSION"
 
 
+# 共用的 WHERE：租戶/使用者/知識庫隔離 + 排除 soft delete。
+_SCOPE = (
+    "WHERE knowledge_base_id = :knowledge_base_id AND tenant_id = :tenant_id "
+    "AND user_id = :user_id AND deleted_at IS NULL "
+)
+
 # 白名單查詢：SQL 文字固定，只允許透過具名參數綁定變動內容。
 _WHITELISTED_QUERIES: dict[MetadataQueryType, str] = {
-    MetadataQueryType.BY_AUTHOR: (
-        "SELECT id, title, author, created_at FROM document "
-        "WHERE knowledge_base_id = %(knowledge_base_id)s AND tenant_id = %(tenant_id)s AND user_id = %(user_id)s AND author = %(author)s "
-        "ORDER BY created_at DESC LIMIT %(limit)s"
-    ),
     MetadataQueryType.BY_DATE_RANGE: (
-        "SELECT id, title, author, created_at FROM document "
-        "WHERE knowledge_base_id = %(knowledge_base_id)s AND tenant_id = %(tenant_id)s AND user_id = %(user_id)s "
-        "AND created_at BETWEEN %(start_date)s AND %(end_date)s "
-        "ORDER BY created_at DESC LIMIT %(limit)s"
+        "SELECT id, filename, file_extension, created_dt FROM documents "
+        + _SCOPE
+        + "AND created_dt BETWEEN :start_date AND :end_date "
+        "ORDER BY created_dt DESC LIMIT :limit"
     ),
     MetadataQueryType.BY_DOCUMENT_TYPE: (
-        "SELECT id, title, author, document_type, created_at FROM document "
-        "WHERE knowledge_base_id = %(knowledge_base_id)s AND tenant_id = %(tenant_id)s AND user_id = %(user_id)s AND document_type = %(document_type)s "
-        "ORDER BY created_at DESC LIMIT %(limit)s"
+        "SELECT id, filename, file_extension, created_dt FROM documents "
+        + _SCOPE
+        + "AND file_extension = :file_extension "
+        "ORDER BY created_dt DESC LIMIT :limit"
     ),
+    # documents 沒有 version 欄位：同一 KB 內同一 filename 的每次上傳視為一個版本，
+    # 版本號依 created_dt 由舊到新編號。
     MetadataQueryType.BY_VERSION: (
-        "SELECT id, title, version, created_at FROM document_chunk "
-        "WHERE knowledge_base_id = %(knowledge_base_id)s AND tenant_id = %(tenant_id)s AND user_id = %(user_id)s AND document_id = %(document_id)s "
-        "ORDER BY version DESC LIMIT %(limit)s"
+        "SELECT id, filename, file_extension, content_hash, file_size_bytes, created_dt, "
+        "ROW_NUMBER() OVER (ORDER BY created_dt ASC) AS version FROM documents "
+        + _SCOPE
+        + "AND filename = :filename "
+        "ORDER BY created_dt DESC LIMIT :limit"
     ),
 }
 
@@ -91,14 +97,19 @@ class LLMMetadataQueryExtractor:
     async def extract(self, query: str) -> MetadataQueryRequest:
         instructions = (
             "把使用者問題轉成以下白名單查詢類型之一，並填入對應參數："
-            "BY_AUTHOR(author) / BY_DATE_RANGE(start_date, end_date) / "
-            "BY_DOCUMENT_TYPE(document_type) / BY_VERSION(document_id)。"
+            "BY_DATE_RANGE(start_date, end_date) / "
+            "BY_DOCUMENT_TYPE(file_extension: pdf | md | docx) / BY_VERSION(filename)。"
             "不要輸出任何 SQL，只輸出查詢類型與參數。"
         )
         messages = [("system", instructions), ("human", query)]
         return await self._get_structured_model().ainvoke(messages)
 
 
+def _normalize_params(query_type: MetadataQueryType, params: dict) -> dict:
+    """把 extractor 的參數轉成和 DB 存法一致的格式（上傳時 file_extension 存小寫、不含點）。"""
+    if query_type is MetadataQueryType.BY_DOCUMENT_TYPE and isinstance(params.get("file_extension"), str):
+        params = {**params, "file_extension": params["file_extension"].strip().lstrip(".").lower()}
+    return params
 
 
 def _format_rows(query_type: MetadataQueryType, rows: list[dict]) -> str:
@@ -129,16 +140,15 @@ class MetadataBranch:
         # 順序很重要：先展開 extractor 產出的參數，最後才強制蓋上信任的
         # knowledge_base_id/tenant_id/user_id，這樣即使 extractor 塞了別的值也無效。
         params = {
-            **request.params,
+            **_normalize_params(request.query_type, request.params),
             "limit": self._default_limit,
             "knowledge_base_id": knowledge_base_id,
             "tenant_id": state.tenant_id,
             "user_id": state.user_id,
         }
         async with AsyncSessionLocal() as session:
-            rows = await session.execute(sql, params)
-            rows = rows.fetchall()
-            rows = [dict(row) for row in rows]
+            result = await session.execute(text(sql), params)
+            rows = [dict(row) for row in result.mappings().all()]
         answer = _format_rows(request.query_type, rows)
 
         return {
