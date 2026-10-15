@@ -6,6 +6,7 @@ from `Document.__table__`, so a renamed/removed column fails here instead of at 
 """
 
 import asyncio
+from datetime import date
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -18,6 +19,7 @@ from app.routing.branches.metadata import (
     MetadataBranch,
     MetadataQueryRequest,
     MetadataQueryType,
+    _build_query_params,
 )
 
 
@@ -41,8 +43,9 @@ class _Result:
 
 
 class _FakeSession:
-    def __init__(self, rows):
+    def __init__(self, rows, error: Exception | None = None):
         self._rows = rows
+        self._error = error
         self.calls = []
 
     async def __aenter__(self):
@@ -53,6 +56,8 @@ class _FakeSession:
 
     async def execute(self, statement, params):
         self.calls.append((str(statement), params))
+        if self._error:
+            raise self._error
         return _Result(self._rows)
 
 
@@ -66,8 +71,8 @@ def _state() -> RoutedAgentState:
     )
 
 
-def _run(monkeypatch, request, rows=()):
-    session = _FakeSession(list(rows))
+def _run(monkeypatch, request, rows=(), error=None):
+    session = _FakeSession(list(rows), error)
     monkeypatch.setattr(metadata, "AsyncSessionLocal", lambda: session)
     out = asyncio.run(MetadataBranch(extractor=_FixedExtractor(request))(_state()))
     return session, out
@@ -76,13 +81,17 @@ def _run(monkeypatch, request, rows=()):
 def test_by_author_is_not_whitelisted():
     assert "BY_AUTHOR" not in MetadataQueryType.__members__
     with pytest.raises(ValueError):
-        MetadataQueryRequest(query_type="BY_AUTHOR", params={"author": "x"})
+        MetadataQueryRequest(query_type="BY_AUTHOR")
 
 
-def test_trusted_scope_overrides_extractor_params(monkeypatch):
+def test_trusted_scope_cannot_come_from_extractor(monkeypatch):
+    # The request model has no scope fields; anything the LLM adds is dropped.
     request = MetadataQueryRequest(
         query_type=MetadataQueryType.BY_VERSION,
-        params={"filename": "a.pdf", "knowledge_base_id": "kb-evil", "tenant_id": "t-evil", "user_id": "u-evil"},
+        filename="a.pdf",
+        knowledge_base_id="kb-evil",
+        tenant_id="t-evil",
+        user_id="u-evil",
     )
     session, _ = _run(monkeypatch, request)
 
@@ -93,17 +102,84 @@ def test_trusted_scope_overrides_extractor_params(monkeypatch):
     assert params["user_id"] == "user-a"
 
 
-def test_file_extension_is_normalized(monkeypatch):
+def test_only_params_of_the_selected_query_type_are_sent(monkeypatch):
     request = MetadataQueryRequest(
-        query_type=MetadataQueryType.BY_DOCUMENT_TYPE, params={"file_extension": " .PDF "}
+        query_type=MetadataQueryType.BY_DOCUMENT_TYPE, file_extension=" .PDF ", filename="a.pdf"
     )
     session, _ = _run(monkeypatch, request)
 
-    assert session.calls[0][1]["file_extension"] == "pdf"
+    params = session.calls[0][1]
+    assert params["file_extension"] == "pdf"
+    assert "filename" not in params
+
+
+def test_date_range_end_date_is_inclusive(monkeypatch):
+    request = MetadataQueryRequest(
+        query_type=MetadataQueryType.BY_DATE_RANGE, start_date="2026-10-01", end_date="2026-10-05"
+    )
+    session, _ = _run(monkeypatch, request)
+
+    params = session.calls[0][1]
+    assert params["start_date"] == date(2026, 10, 1)
+    assert params["end_date_exclusive"] == date(2026, 10, 6)
+
+
+@pytest.mark.parametrize(
+    "request_kwargs, expected",
+    [
+        ({"query_type": MetadataQueryType.BY_VERSION}, "filename"),
+        ({"query_type": MetadataQueryType.BY_DATE_RANGE, "start_date": "2026-10-01"}, "end_date"),
+        ({"query_type": MetadataQueryType.BY_DOCUMENT_TYPE, "file_extension": "xlsx"}, "xlsx"),
+        (
+            {"query_type": MetadataQueryType.BY_DATE_RANGE, "start_date": "2026-10-05", "end_date": "2026-10-01"},
+            "晚於",
+        ),
+    ],
+)
+def test_invalid_request_degrades_without_querying(monkeypatch, request_kwargs, expected):
+    session, out = _run(monkeypatch, MetadataQueryRequest(**request_kwargs))
+
+    assert session.calls == []
+    assert expected in out["answer"]
+    assert out["sql_documents"] == []
+    assert "invalid request" in out["trace"][-1]
+
+
+def test_extractor_failure_degrades(monkeypatch):
+    class _BrokenExtractor:
+        async def extract(self, query):
+            raise RuntimeError("llm down")
+
+    session = _FakeSession([])
+    monkeypatch.setattr(metadata, "AsyncSessionLocal", lambda: session)
+    out = asyncio.run(MetadataBranch(extractor=_BrokenExtractor())(_state()))
+
+    assert session.calls == []
+    assert out["sql_documents"] == []
+    assert "extractor failed (RuntimeError: llm down)" in out["trace"][-1]
+
+
+def test_db_failure_degrades_without_leaking_sql_into_trace(monkeypatch):
+    request = MetadataQueryRequest(query_type=MetadataQueryType.BY_VERSION, filename="a.pdf")
+    session, out = _run(monkeypatch, request, error=RuntimeError("SELECT ... secret params"))
+
+    assert out["answer"] == "查詢文件資料時發生錯誤，請稍後再試。"
+    assert out["sql_documents"] == []
+    assert out["trace"][-1].startswith("metadata: query failed type=BY_VERSION (RuntimeError)")
+    assert "secret" not in out["trace"][-1]
+
+
+def test_missing_knowledge_base_id_still_fails_fast(monkeypatch):
+    request = MetadataQueryRequest(query_type=MetadataQueryType.BY_VERSION, filename="a.pdf")
+    state = _state().model_copy(update={"knowledge_base_id": ""})
+    monkeypatch.setattr(metadata, "AsyncSessionLocal", lambda: _FakeSession([]))
+
+    with pytest.raises(ValueError, match="knowledge_base_id missing"):
+        asyncio.run(MetadataBranch(extractor=_FixedExtractor(request))(state))
 
 
 def test_rows_are_returned_as_dicts(monkeypatch):
-    request = MetadataQueryRequest(query_type=MetadataQueryType.BY_VERSION, params={"filename": "a.pdf"})
+    request = MetadataQueryRequest(query_type=MetadataQueryType.BY_VERSION, filename="a.pdf")
     rows = [{"id": "d1", "filename": "a.pdf", "version": 1}]
     _, out = _run(monkeypatch, request, rows)
 
@@ -134,6 +210,7 @@ def conn():
             ("d3", "kb-a", "user-a", "a.pdf", "pdf", "2026-10-06 00:00:00", "2026-10-07 00:00:00"),
             ("d4", "kb-b", "user-a", "a.pdf", "pdf", "2026-10-02 00:00:00", None),
             ("d5", "kb-a", "user-a", "b.md", "md", "2026-10-03 00:00:00", None),
+            ("d6", "kb-a", "user-a", "c.md", "md", "2026-10-05 15:00:00", None),
         ]
         for id_, kb, user_id, filename, ext, created_dt, deleted_at in rows:
             connection.execute(
@@ -145,21 +222,44 @@ def conn():
     engine.dispose()
 
 
-_EXTRA_PARAMS = {
-    MetadataQueryType.BY_DATE_RANGE: {"start_date": "2026-10-01", "end_date": "2026-10-31"},
-    MetadataQueryType.BY_DOCUMENT_TYPE: {"file_extension": "pdf"},
-    MetadataQueryType.BY_VERSION: {"filename": "a.pdf"},
+_REQUESTS = {
+    MetadataQueryType.BY_DATE_RANGE: MetadataQueryRequest(
+        query_type=MetadataQueryType.BY_DATE_RANGE, start_date="2026-10-01", end_date="2026-10-31"
+    ),
+    MetadataQueryType.BY_DOCUMENT_TYPE: MetadataQueryRequest(
+        query_type=MetadataQueryType.BY_DOCUMENT_TYPE, file_extension="pdf"
+    ),
+    MetadataQueryType.BY_VERSION: MetadataQueryRequest(query_type=MetadataQueryType.BY_VERSION, filename="a.pdf"),
 }
+
+
+def _sqlite_params(request: MetadataQueryRequest) -> dict:
+    # sqlite3's default date adapter is deprecated; SQLite stores the dates as ISO text anyway.
+    params = {k: v.isoformat() if isinstance(v, date) else v for k, v in _build_query_params(request).items()}
+    return {**_SCOPE, **params}
 
 
 @pytest.mark.parametrize("query_type", list(MetadataQueryType))
 def test_every_whitelisted_query_runs_against_documents_schema(conn, query_type):
-    conn.execute(text(_WHITELISTED_QUERIES[query_type]), {**_SCOPE, **_EXTRA_PARAMS[query_type]}).all()
+    conn.execute(text(_WHITELISTED_QUERIES[query_type]), _sqlite_params(_REQUESTS[query_type])).all()
+
+
+def test_date_range_includes_whole_end_day(conn):
+    request = MetadataQueryRequest(
+        query_type=MetadataQueryType.BY_DATE_RANGE, start_date="2026-10-05", end_date="2026-10-05"
+    )
+    rows = conn.execute(
+        text(_WHITELISTED_QUERIES[MetadataQueryType.BY_DATE_RANGE]), _sqlite_params(request)
+    ).mappings().all()
+
+    # d6 was uploaded at 15:00 on the end date; BETWEEN '...' AND '2026-10-05' used to drop it.
+    assert [r["id"] for r in rows] == ["d6", "d2"]
 
 
 def test_by_version_numbers_uploads_of_same_filename(conn):
     rows = conn.execute(
-        text(_WHITELISTED_QUERIES[MetadataQueryType.BY_VERSION]), {**_SCOPE, "filename": "a.pdf"}
+        text(_WHITELISTED_QUERIES[MetadataQueryType.BY_VERSION]),
+        _sqlite_params(_REQUESTS[MetadataQueryType.BY_VERSION]),
     ).mappings().all()
 
     # d3 is soft-deleted, d4 is in another KB: neither counts as a version.

@@ -3,22 +3,27 @@
 **禁止 text-to-SQL**：SQL 文字全部是模組層級的固定常數（`_WHITELISTED_QUERIES`），
 從使用者輸入到最終執行之間唯一允許變動的是「選哪一個白名單查詢」+「綁定參數」，
 SQL 字串本身永遠不會被拼接或改寫。負責從自然語言萃取「查哪一種、參數是什麼」的
-`MetadataQueryExtractor` 只能輸出 `MetadataQueryType` enum + 參數 dict，不能輸出
-任意 SQL 片段。
+`MetadataQueryExtractor` 只能輸出 `MetadataQueryRequest`（`MetadataQueryType` enum +
+固定型別的參數欄位），不能輸出任意 SQL 片段，也不能輸出任意參數 key。
 
 租戶隔離：`knowledge_base_id` 一律用 `common.enforce_knowledge_base_id()` 從
-state 強制取出；即使 extractor 因為被誘導（prompt injection 等）而在參數裡塞了
-別的 `knowledge_base_id`，也會在組 params 時被強制覆蓋掉，絕不送進 SQL 執行。
+state 強制取出；`MetadataQueryRequest` 本身沒有 `knowledge_base_id`/`tenant_id`/
+`user_id` 欄位，SQL 參數裡的這三個值只來自 state。
+
+降級：extractor 失敗、參數不完整、DB 查詢失敗都不會讓 graph 掛掉，而是回一段說明
+並把原因記進 `trace`。唯一例外是缺 `knowledge_base_id`——那是租戶邊界，照樣 fail fast。
 """
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 
+from app.core.logging import get_logger
 from app.db.session import AsyncSessionLocal
 from app.llm.factory import LLMFactory
 from app.routing.branches.common import enforce_knowledge_base_id
@@ -26,9 +31,14 @@ from app.routing.branches.common import enforce_knowledge_base_id
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
 
-ROUTER_VERSION = "metadata-v1"
+logger = get_logger(__name__)
+
+ROUTER_VERSION = "metadata-v2"
 
 _DEFAULT_LIMIT = 20
+
+# 和上傳 endpoint 允許的副檔名一致（app/api/v1/endpoints/knowledgeBases.py）。
+_ALLOWED_FILE_EXTENSIONS = ("pdf", "md", "docx")
 
 
 class MetadataQueryType(str, Enum):
@@ -45,10 +55,11 @@ _SCOPE = (
 
 # 白名單查詢：SQL 文字固定，只允許透過具名參數綁定變動內容。
 _WHITELISTED_QUERIES: dict[MetadataQueryType, str] = {
+    # 半開區間：end_date 當天整天都要算進去，所以比較的是「隔天 00:00 之前」。
     MetadataQueryType.BY_DATE_RANGE: (
         "SELECT id, filename, file_extension, created_dt FROM documents "
         + _SCOPE
-        + "AND created_dt BETWEEN :start_date AND :end_date "
+        + "AND created_dt >= :start_date AND created_dt < :end_date_exclusive "
         "ORDER BY created_dt DESC LIMIT :limit"
     ),
     MetadataQueryType.BY_DOCUMENT_TYPE: (
@@ -68,10 +79,38 @@ _WHITELISTED_QUERIES: dict[MetadataQueryType, str] = {
     ),
 }
 
+# 每種查詢必填的 MetadataQueryRequest 欄位。
+_REQUIRED_FIELDS: dict[MetadataQueryType, tuple[str, ...]] = {
+    MetadataQueryType.BY_DATE_RANGE: ("start_date", "end_date"),
+    MetadataQueryType.BY_DOCUMENT_TYPE: ("file_extension",),
+    MetadataQueryType.BY_VERSION: ("filename",),
+}
+
 
 class MetadataQueryRequest(BaseModel):
+    """extractor 的輸出。參數是固定型別的欄位而不是 `dict`：
+    LLM structured output 對無型別 dict 支援差，且固定欄位讓 extractor 無法塞入任意 key。"""
+
     query_type: MetadataQueryType
-    params: dict = Field(default_factory=dict)
+    start_date: date | None = Field(default=None, description="BY_DATE_RANGE: inclusive start date, YYYY-MM-DD")
+    end_date: date | None = Field(default=None, description="BY_DATE_RANGE: inclusive end date, YYYY-MM-DD")
+    file_extension: str | None = Field(default=None, description="BY_DOCUMENT_TYPE: one of pdf, md, docx")
+    filename: str | None = Field(default=None, description="BY_VERSION: exact file name, e.g. report.pdf")
+
+    @field_validator("file_extension")
+    @classmethod
+    def _normalize_file_extension(cls, value: str | None) -> str | None:
+        # 上傳時 file_extension 存小寫、不含點。
+        return value.strip().lstrip(".").lower() if value is not None else None
+
+    @field_validator("filename")
+    @classmethod
+    def _strip_filename(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+
+class InvalidMetadataQuery(ValueError):
+    """extractor 的輸出不足以組出合法查詢（缺必填參數、值不合法）。訊息會直接回給使用者。"""
 
 
 class MetadataQueryExtractor(Protocol):
@@ -96,8 +135,9 @@ class LLMMetadataQueryExtractor:
 
     async def extract(self, query: str) -> MetadataQueryRequest:
         instructions = (
-            "把使用者問題轉成以下白名單查詢類型之一，並填入對應參數："
-            "BY_DATE_RANGE(start_date, end_date) / "
+            f"今天是 {date.today().isoformat()}。"
+            "把使用者問題轉成以下白名單查詢類型之一，並只填入該類型需要的欄位："
+            "BY_DATE_RANGE(start_date, end_date；YYYY-MM-DD，兩端都包含) / "
             "BY_DOCUMENT_TYPE(file_extension: pdf | md | docx) / BY_VERSION(filename)。"
             "不要輸出任何 SQL，只輸出查詢類型與參數。"
         )
@@ -105,11 +145,28 @@ class LLMMetadataQueryExtractor:
         return await self._get_structured_model().ainvoke(messages)
 
 
-def _normalize_params(query_type: MetadataQueryType, params: dict) -> dict:
-    """把 extractor 的參數轉成和 DB 存法一致的格式（上傳時 file_extension 存小寫、不含點）。"""
-    if query_type is MetadataQueryType.BY_DOCUMENT_TYPE and isinstance(params.get("file_extension"), str):
-        params = {**params, "file_extension": params["file_extension"].strip().lstrip(".").lower()}
-    return params
+def _build_query_params(request: MetadataQueryRequest) -> dict:
+    """依查詢類型挑出並驗證參數；只回傳該類型 SQL 用得到的 key。"""
+    query_type = request.query_type
+    missing = [name for name in _REQUIRED_FIELDS[query_type] if not getattr(request, name)]
+    if missing:
+        raise InvalidMetadataQuery(f"{query_type.value} 查詢缺少必要條件：{', '.join(missing)}。")
+
+    if query_type is MetadataQueryType.BY_DATE_RANGE:
+        if request.start_date > request.end_date:
+            raise InvalidMetadataQuery(
+                f"日期範圍不合法：開始日期 {request.start_date} 晚於結束日期 {request.end_date}。"
+            )
+        return {"start_date": request.start_date, "end_date_exclusive": request.end_date + timedelta(days=1)}
+
+    if query_type is MetadataQueryType.BY_DOCUMENT_TYPE:
+        if request.file_extension not in _ALLOWED_FILE_EXTENSIONS:
+            raise InvalidMetadataQuery(
+                f"不支援的文件類型：{request.file_extension}（只支援 {', '.join(_ALLOWED_FILE_EXTENSIONS)}）。"
+            )
+        return {"file_extension": request.file_extension}
+
+    return {"filename": request.filename}
 
 
 def _format_rows(query_type: MetadataQueryType, rows: list[dict]) -> str:
@@ -131,26 +188,52 @@ class MetadataBranch:
         self._default_limit = default_limit
 
     async def __call__(self, state: RoutedAgentState) -> dict:
+        # 租戶邊界：缺 knowledge_base_id 必須 fail fast，所以放在所有 try 之外。
         knowledge_base_id = enforce_knowledge_base_id(state)
         query = state.resolved_query
 
-        request = await self._extractor.extract(query)
-        sql = _WHITELISTED_QUERIES[request.query_type]
+        def _degraded(answer: str, reason: str) -> dict:
+            return {
+                "answer": answer,
+                "sql_documents": [],
+                "trace": state.trace + [f"metadata: {reason} kb={knowledge_base_id}"],
+            }
 
-        # 順序很重要：先展開 extractor 產出的參數，最後才強制蓋上信任的
-        # knowledge_base_id/tenant_id/user_id，這樣即使 extractor 塞了別的值也無效。
+        try:
+            request = await self._extractor.extract(query)
+        except Exception as exc:  # noqa: BLE001 - extractor 失敗要降級，不能讓整個 graph 掛掉
+            return _degraded(
+                "無法從問題判斷要查哪一種文件資料，請換個說法，例如指定日期範圍、文件類型或檔名。",
+                f"extractor failed ({type(exc).__name__}: {exc})",
+            )
+
+        try:
+            query_params = _build_query_params(request)
+        except InvalidMetadataQuery as exc:
+            return _degraded(str(exc), f"invalid request type={request.query_type.value} ({exc})")
+
+        sql = _WHITELISTED_QUERIES[request.query_type]
+        # 租戶範圍的三個值只來自 state；放在最後，確保不會被任何查詢參數覆蓋。
         params = {
-            **_normalize_params(request.query_type, request.params),
+            **query_params,
             "limit": self._default_limit,
             "knowledge_base_id": knowledge_base_id,
             "tenant_id": state.tenant_id,
             "user_id": state.user_id,
         }
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(text(sql), params)
-            rows = [dict(row) for row in result.mappings().all()]
-        answer = _format_rows(request.query_type, rows)
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(text(sql), params)
+                rows = [dict(row) for row in result.mappings().all()]
+        except Exception as exc:  # noqa: BLE001 - DB 失敗要降級，不能讓整個 graph 掛掉
+            # DB 錯誤訊息含 SQL 與參數，只寫進 log；trace 只留例外型別。
+            logger.exception("metadata query failed", query_type=request.query_type.value)
+            return _degraded(
+                "查詢文件資料時發生錯誤，請稍後再試。",
+                f"query failed type={request.query_type.value} ({type(exc).__name__})",
+            )
 
+        answer = _format_rows(request.query_type, rows)
         return {
             "answer": answer,
             "sql_documents": rows,

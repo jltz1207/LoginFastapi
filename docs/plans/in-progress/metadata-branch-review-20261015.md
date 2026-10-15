@@ -1,6 +1,6 @@
 # Code review：`app/routing/branches/metadata.py`
 
-> **狀態：P0-1 ～ P0-4、P1-1 已修（2026-10-15，未 commit）；P1-2 之後尚未處理。**
+> **狀態：P0-1 ～ P0-4、P1-1 已修（commit `abbaaf2`）；P1-2 ～ P1-4 已修（2026-10-15，未 commit）；P2 尚未處理。**
 > Review 日期：2026-10-15。
 > 對照版本：SQLAlchemy 2.0.51（`uv.lock`）。以下結論來自閱讀程式碼，**未實際執行**。
 
@@ -156,7 +156,7 @@ rows = [dict(r) for r in result.mappings().all()]
 
 ---
 
-### [ ] P1-2｜沒有逐一檢查 extractor 回傳的 `params`
+### [x] P1-2｜沒有逐一檢查 extractor 回傳的 `params`
 
 `metadata.py:66-68`、`131-137`：
 
@@ -169,7 +169,7 @@ rows = [dict(r) for r in result.mappings().all()]
 
 ---
 
-### [ ] P1-3｜日期範圍的邊界
+### [x] P1-3｜日期範圍的邊界
 
 `metadata.py:50`。LLM 給的若是 `2026-10-15` 這種日期，而欄位是 timestamp，
 `BETWEEN ... AND '2026-10-15'` 會漏掉當天 00:00 之後的資料。
@@ -179,7 +179,7 @@ rows = [dict(r) for r in result.mappings().all()]
 
 ---
 
-### [ ] P1-4｜沒有錯誤處理
+### [x] P1-4｜沒有錯誤處理
 
 extractor（LLM）出錯或資料庫出錯時，例外會直接往上拋，整個 graph 中斷。
 建議和其他分支統一做法：捕捉錯誤、在 `trace` 記下來，然後回一個降級的答案。
@@ -221,6 +221,41 @@ extractor（LLM）出錯或資料庫出錯時，例外會直接往上拋，整�
 - 沒有對 Postgres 實測（worktree 只有 `.env.prod`，刻意不連）。SQLite 能驗證表名、欄位與 window function，
   但驗不到 Postgres 特有行為，例如 `uuid` 欄位和字串參數比較、`timestamptz` 和日期字串比較。原計畫的 `EXPLAIN` integration test 仍待補。
 - 依指示沒有跑 migration；這次改動也不需要 migration。
+
+## 實作結果：P1-2 ～ P1-4（2026-10-15）
+
+```mermaid
+flowchart TD
+    A[enforce_knowledge_base_id] -->|缺值| X[raise ValueError：fail fast]
+    A --> B[extractor.extract]
+    B -->|例外| D1[降級：請換個說法]
+    B --> C[_build_query_params]
+    C -->|InvalidMetadataQuery| D2[降級：回傳缺少/不合法的參數]
+    C --> E["session.execute(text(sql), params)"]
+    E -->|例外| D3[降級：查詢發生錯誤<br/>完整錯誤只寫 log]
+    E --> F[_format_rows]
+```
+
+- **P1-2**：`MetadataQueryRequest` 的 `params: dict` 改成固定型別欄位
+  （`start_date`/`end_date: date`、`file_extension`、`filename`，皆 optional）。
+  - `_REQUIRED_FIELDS` + `_build_query_params()` 依查詢類型檢查必填欄位，**只回傳該類型 SQL 用得到的 key**。
+  - `file_extension` 必須是 `pdf`/`md`/`docx`（與上傳 endpoint 一致）；正規化移到 model 的 `field_validator`。
+  - request model 沒有 `knowledge_base_id`/`tenant_id`/`user_id` 欄位，LLM 多給的 key 會被 Pydantic 丟掉。
+- **P1-3**：SQL 改成半開區間 `created_dt >= :start_date AND created_dt < :end_date_exclusive`（`end_date + 1 天`）；
+  `start_date > end_date` 視為不合法請求。extractor prompt 加入今天日期，讓 LLM 能解析「上週」這類相對日期。
+- **P1-4**：三種失敗都降級，回傳 `answer` + 空的 `sql_documents`，原因寫進 `trace`，做法和 `RouterNode` 一致。
+  - DB 錯誤訊息含 SQL 與參數，只用 structlog `logger.exception` 記錄，`trace` 只留例外型別。
+  - 缺 `knowledge_base_id` 照樣 raise：那是租戶邊界，不能降級。
+- extractor prompt 改了，依既有規則把 `ROUTER_VERSION` 遞增為 `metadata-v2`。
+
+驗證：`pytest tests/routing tests/auth` → **35 passed**（新增測試涵蓋：只送出所選類型的參數、缺參數/不支援類型/日期顛倒時不查 DB、
+extractor 與 DB 失敗的降級、DB 錯誤不進 trace、缺 KB 仍 fail fast、SQLite 上 `end_date` 當天 15:00 的資料有被查到）。
+
+未查證：
+
+- Gemini structured output 能否正確產出 `date` 欄位（JSON schema `format: date`），沒有用真實 LLM 測過。
+- Postgres 上 `timestamptz >= date` 的比較依 DB session 的 `TimeZone` 決定一天的邊界；若 session 不是使用者時區，
+  邊界會有時差。目前沒有使用者時區資料，先接受這個限制。
 
 ## 做得好的地方
 
