@@ -1,6 +1,6 @@
 # Code review：`app/routing/branches/metadata.py`
 
-> **狀態：P0-1 ～ P0-4、P1-1 已修（commit `abbaaf2`）；P1-2 ～ P1-4 已修（2026-10-15，未 commit）；P2 尚未處理。**
+> **狀態：P0-1 ～ P0-4、P1-1 已修（commit `abbaaf2`）；P1-2 ～ P1-4、P2 已修（2026-10-15，未 commit）；剩 Postgres integration test 待補。**
 > Review 日期：2026-10-15。
 > 對照版本：SQLAlchemy 2.0.51（`uv.lock`）。以下結論來自閱讀程式碼，**未實際執行**。
 
@@ -186,16 +186,16 @@ extractor（LLM）出錯或資料庫出錯時，例外會直接往上拋，整�
 
 ---
 
-### [ ] P2-1｜`_format_rows` 直接輸出 dict repr
+### [x] P2-1｜`_format_rows` 直接輸出 dict repr
 
 `metadata.py:104-108`。輸出裡會有 `UUID(...)`、`datetime(...)` 這類字樣，可讀性差，
 應該格式化成檔名、作者、日期等欄位。
 
-### [ ] P2-2｜`sql_documents` 存的是 raw dict
+### [x] P2-2｜`sql_documents` 存的是 raw dict
 
 裡面有 `UUID` 和 `datetime`，會被 checkpointer 序列化。建議先轉成 JSON 友善的型別，或定義一個 schema。
 
-### [ ] P2-3｜雜項
+### [x] P2-3｜雜項
 
 - `metadata.py:100-103` 有多餘的空行。
 - module docstring 裡寫的 `document`/`document_chunk` 要跟著 P0-1 一起改。
@@ -257,6 +257,30 @@ extractor 與 DB 失敗的降級、DB 錯誤不進 trace、缺 KB 仍 fail fast�
 - Postgres 上 `timestamptz >= date` 的比較依 DB session 的 `TimeZone` 決定一天的邊界；若 session 不是使用者時區，
   邊界會有時差。目前沒有使用者時區資料，先接受這個限制。
 
+## 實作結果：P2（2026-10-15）
+
+- **P2-1**：`_format_rows()` 依查詢類型輸出可讀文字（以下輸出取自 `tests/routing/test_metadata_branch.py` 的斷言）：
+
+  ```
+  a.pdf 共找到 1 個版本（新到舊）：
+  - v1：2026-10-05 15:00 上傳，2.0 KB
+  ```
+
+  ```
+  找到 2 份文件（新到舊）：
+  - f0.pdf（PDF，2026-10-05 15:00 上傳）
+  ```
+
+  回傳筆數達到 `limit` 時，加一行「只列出最新的 N 筆」。時間照 DB 回傳的值顯示，沒有轉成使用者時區。
+- **P2-2**：`sql_documents` 經 `_to_jsonable()` 把 `UUID` 轉成 `str`、`date`/`datetime` 轉成 ISO 字串，測試用 `json.dumps` 確認可序列化。
+  目前沒有其他程式讀 `sql_documents`，所以沒有另外定義 schema。
+- **P2-3**：多餘空行與 docstring 已在先前改動中處理；另外移除沒人使用的 `QueryExecutor` Protocol
+  （舊版 `PsycopgQueryExecutor` 的遺留，執行層已改用 `AsyncSessionLocal`）。
+
+驗證：`pytest tests/routing tests/auth` → **37 passed**。
+
+另外發現：`app/routing/PLAN.md:55-59` 仍寫著「`BY_VERSION` 暫時移除」，和目前的實作不一致，尚未更新。
+
 ## 做得好的地方
 
 - SQL 全部是常數，LLM 只能從 enum 裡選，從結構上杜絕了 text-to-SQL injection。
@@ -266,7 +290,10 @@ extractor 與 DB 失敗的降級、DB 錯誤不進 trace、缺 KB 仍 fail fast�
 
 ## 待辦
 
-1. 決定 P0-1 的方向（補欄位寫 migration，或改用現有欄位）。
-2. 修 P0-2 到 P0-4，讓查詢能跑通，並補測試。
-3. 處理 P1（soft delete、參數 schema、日期邊界、錯誤處理）。
-4. P2 收尾。
+1. [x] 決定 P0-1 的方向（補欄位寫 migration，或改用現有欄位）。
+2. [x] 修 P0-2 到 P0-4，讓查詢能跑通，並補測試。
+3. [x] 處理 P1（soft delete、參數 schema、日期邊界、錯誤處理）。
+4. [x] P2 收尾。
+5. [ ] 對 dev Postgres 跑白名單 SQL 的 `EXPLAIN` integration test。
+6. [ ] 用真實 LLM 確認 Gemini structured output 能產出 `date` 欄位。
+7. [ ] 更新 `app/routing/PLAN.md` 中過時的 METADATA 說明。

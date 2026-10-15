@@ -6,7 +6,9 @@ from `Document.__table__`, so a renamed/removed column fails here instead of at 
 """
 
 import asyncio
-from datetime import date
+import json
+import uuid
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -178,13 +180,44 @@ def test_missing_knowledge_base_id_still_fails_fast(monkeypatch):
         asyncio.run(MetadataBranch(extractor=_FixedExtractor(request))(state))
 
 
-def test_rows_are_returned_as_dicts(monkeypatch):
+_DOC_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+_CREATED = datetime(2026, 10, 5, 15, 0, tzinfo=timezone.utc)
+
+
+def test_version_rows_are_formatted_and_jsonable(monkeypatch):
     request = MetadataQueryRequest(query_type=MetadataQueryType.BY_VERSION, filename="a.pdf")
-    rows = [{"id": "d1", "filename": "a.pdf", "version": 1}]
+    rows = [{"id": _DOC_ID, "filename": "a.pdf", "file_extension": "pdf", "content_hash": None,
+             "file_size_bytes": 2048, "created_dt": _CREATED, "version": 1}]
     _, out = _run(monkeypatch, request, rows)
 
-    assert out["sql_documents"] == rows
+    assert out["answer"] == "a.pdf 共找到 1 個版本（新到舊）：\n- v1：2026-10-05 15:00 上傳，2.0 KB"
+    assert out["sql_documents"][0]["id"] == str(_DOC_ID)
+    assert out["sql_documents"][0]["created_dt"] == "2026-10-05T15:00:00+00:00"
+    json.dumps(out["sql_documents"])
     assert "rows=1" in out["trace"][-1]
+
+
+def test_document_rows_are_formatted_with_truncation_note(monkeypatch):
+    request = MetadataQueryRequest(query_type=MetadataQueryType.BY_DOCUMENT_TYPE, file_extension="pdf")
+    rows = [{"id": _DOC_ID, "filename": f"f{i}.pdf", "file_extension": "pdf", "created_dt": _CREATED} for i in range(2)]
+    session = _FakeSession(rows)
+    monkeypatch.setattr(metadata, "AsyncSessionLocal", lambda: session)
+    out = asyncio.run(MetadataBranch(extractor=_FixedExtractor(request), default_limit=2)(_state()))
+
+    assert out["answer"].splitlines() == [
+        "找到 2 份文件（新到舊）：",
+        "- f0.pdf（PDF，2026-10-05 15:00 上傳）",
+        "- f1.pdf（PDF，2026-10-05 15:00 上傳）",
+        "（只列出最新的 2 筆，可縮小條件查詢更多。）",
+    ]
+
+
+def test_no_rows_message(monkeypatch):
+    request = MetadataQueryRequest(query_type=MetadataQueryType.BY_VERSION, filename="a.pdf")
+    _, out = _run(monkeypatch, request, [])
+
+    assert out["answer"] == "沒有找到符合條件的文件。"
+    assert out["sql_documents"] == []
 
 
 # --- Schema guard (SQLite) -------------------------------------------------

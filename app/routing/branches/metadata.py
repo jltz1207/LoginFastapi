@@ -16,9 +16,10 @@ state 強制取出；`MetadataQueryRequest` 本身沒有 `knowledge_base_id`/`te
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
@@ -117,10 +118,6 @@ class MetadataQueryExtractor(Protocol):
     async def extract(self, query: str) -> MetadataQueryRequest: ...
 
 
-class QueryExecutor(Protocol):
-    async def execute(self, sql: str, params: dict) -> list[dict]: ...
-
-
 class LLMMetadataQueryExtractor:
     """把自然語言問題轉成白名單查詢類型 + 參數（不是 SQL）。"""
 
@@ -169,11 +166,48 @@ def _build_query_params(request: MetadataQueryRequest) -> dict:
     return {"filename": request.filename}
 
 
-def _format_rows(query_type: MetadataQueryType, rows: list[dict]) -> str:
+def _format_datetime(value: object) -> str:
+    return value.strftime("%Y-%m-%d %H:%M") if isinstance(value, datetime) else str(value or "-")
+
+
+def _format_size(num_bytes: object) -> str:
+    if not isinstance(num_bytes, int):
+        return "-"
+    if num_bytes < 1024:
+        return f"{num_bytes} B"
+    if num_bytes < 1024 * 1024:
+        return f"{num_bytes / 1024:.1f} KB"
+    return f"{num_bytes / (1024 * 1024):.1f} MB"
+
+
+def _format_rows(query_type: MetadataQueryType, rows: list[dict], limit: int) -> str:
     if not rows:
-        return f"沒有找到符合 {query_type.value} 條件的文件。"
-    lines = [f"- {row}" for row in rows]
-    return "\n".join(lines)
+        return "沒有找到符合條件的文件。"
+
+    if query_type is MetadataQueryType.BY_VERSION:
+        header = f"{rows[0]['filename']} 共找到 {len(rows)} 個版本（新到舊）："
+        lines = [
+            f"- v{row['version']}：{_format_datetime(row['created_dt'])} 上傳，{_format_size(row['file_size_bytes'])}"
+            for row in rows
+        ]
+    else:
+        header = f"找到 {len(rows)} 份文件（新到舊）："
+        lines = [
+            f"- {row['filename']}（{str(row['file_extension']).upper()}，{_format_datetime(row['created_dt'])} 上傳）"
+            for row in rows
+        ]
+
+    if len(rows) >= limit:
+        lines.append(f"（只列出最新的 {limit} 筆，可縮小條件查詢更多。）")
+    return "\n".join([header, *lines])
+
+
+def _to_jsonable(row: dict) -> dict:
+    """`sql_documents` 會被 checkpointer 序列化：UUID/datetime 先轉成字串。"""
+    return {
+        key: str(value) if isinstance(value, UUID) else value.isoformat() if isinstance(value, (date, datetime)) else value
+        for key, value in row.items()
+    }
 
 
 class MetadataBranch:
@@ -233,10 +267,10 @@ class MetadataBranch:
                 f"query failed type={request.query_type.value} ({type(exc).__name__})",
             )
 
-        answer = _format_rows(request.query_type, rows)
+        answer = _format_rows(request.query_type, rows, self._default_limit)
         return {
             "answer": answer,
-            "sql_documents": rows,
+            "sql_documents": [_to_jsonable(row) for row in rows],
             "trace": state.trace
             + [f"metadata: type={request.query_type.value} kb={knowledge_base_id} rows={len(rows)}"],
         }
