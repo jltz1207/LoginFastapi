@@ -1,6 +1,6 @@
 # Code review：`app/routing/branches/meta.py`
 
-> **狀態：已移除 trace 回傳（commit `1bd1f49`，P0-1、P0-2、P1-1、P1-3 因此結案）；P0-3、P2-1、P2-4 已修（commit `ff0e023`）；P1-2 已修；P2-2、P2-3 尚未修正。**
+> **狀態：已移除 trace 回傳（commit `1bd1f49`，P0-1、P0-2、P1-1、P1-3 因此結案）；P0-3、P2-1、P2-4 已修（commit `ff0e023`）；P1-2 已修（commit `0f98fbe`）；P2-2 已修；P2-3 尚未修正。**
 > Review 日期：2026-10-15。
 > P0-3 的結論已用 `tests/routing/test_meta_branch.py` 實測（Python 3.12.13、pytest 9.1.1，`tests/` 全部 148 passed）；其餘結論來自閱讀程式碼，未實際執行。
 
@@ -183,12 +183,33 @@ flowchart LR
 `_matches()` 同時比 `query` 和 `query_lower`，但所有關鍵字本來就是小寫或中文，比 `query_lower` 就夠了。
 已隨 P0-3 刪除，英文 pattern 改用 `re.IGNORECASE`。
 
-### [ ] P2-2｜回覆語言固定為中文
+### [x] P2-2｜回覆語言固定為中文
 
 `who are you` / `What can you help me with?` 會拿到中文回覆。最小修法：`_FIXED_REPLIES` 改成
 `{intent: {"zh": ..., "en": ...}}`，依 query 是否含 CJK 字元選擇。
 
-> **待決定**：產品是否需要英文回覆；不需要就跳過這條。
+> **已決定（2026-10-15）**：需要英文回覆。
+
+#### P2-2 實作結果（2026-10-15）
+
+```mermaid
+flowchart LR
+    RQ[resolved_query] -->|classify_meta_intent| I["MetaIntent | None"]
+    Q["query（使用者原文）"] -->|reply_language| L["zh | en"]
+    I --> R["_REPLIES[L][I]"]
+    L --> R
+```
+
+- `_FIXED_REPLIES` + `_DEFAULT_REPLY` 合併成 `_REPLIES: dict[Language, dict[MetaIntent | None, str]]`，
+  外層是語言（`zh` / `en`），key `None` 是 pattern 沒命中時的預設回覆。
+- 新增 `reply_language()`：含任何 CJK 字元 → `zh`，否則 → `en`；中英混合（`debug 給我看路由追蹤`）算 `zh`。
+- **語言看 `state.query`（使用者原文），intent 看 `resolved_query`**：resolver 改寫時可能換語言，
+  回覆語言應跟使用者輸入一致。
+- 預設回覆順手改寫：原本的「更多系統說明請參考文件」沒有指向任何文件，改成引導使用者問「你能做什麼？」/ `What can you do?`。
+- `ROUTER_VERSION` → `meta-v4`。
+- 測試：英文問題拿到英文回覆、語言跟隨原文而非 resolver 改寫、兩種語言涵蓋相同 intent、
+  英文 capabilities 也受 P1-2 的同步檢查（副檔名齊全、不含 author / summar）。`tests/` 全部 159 passed。
+- 只支援中英兩種語言；其他語言（例如日文假名、韓文）會拿到英文回覆。
 
 ### [ ] P2-3｜module docstring 混入變更歷史
 
@@ -226,10 +247,10 @@ flowchart LR
     X["✓ 移除 trace<br/>(P0-1 / P0-2 / P1-1 / P1-3)"] --> P03["✓ P0-3 meta_intents.py<br/>+ P2-1 + P2-4"]
     P03 --> P12["✓ P1-2 capabilities 文字"]
     P03 --> P23[P2-3 docstring]
-    P03 --> P22["P2-2 英文回覆（待決定）"]
+    P03 --> P22["✓ P2-2 英文回覆"]
 ```
 
 1. ~~移除 trace 回傳~~（已完成，commit `1bd1f49`）。
 2. ~~P0-3 抽出 `meta_intents.py`，同時處理 P2-1、P2-4~~（已完成，commit `ff0e023`）。
-3. ~~P1-2 文字修正~~（已完成）；P2-3 docstring；P2-2 視決定而定。
+3. ~~P1-2 文字修正~~（已完成，commit `0f98fbe`）；~~P2-2 英文回覆~~（已完成）；P2-3 docstring。
 4. `uv run pytest tests/routing` 全綠。
