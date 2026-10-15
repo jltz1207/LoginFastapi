@@ -4,7 +4,7 @@ import enum
 from typing import Optional
 import uuid
 
-from sqlalchemy import UUID, BigInteger, DateTime, Enum, Integer, String, Text, func
+from sqlalchemy import UUID, BigInteger, DateTime, Enum, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -18,6 +18,8 @@ class IngestionStatus(str, enum.Enum):
 
 class Document(Base):
     __tablename__ = "documents"
+    # The ingestion claim query: status = 'PENDING' ORDER BY created_dt.
+    __table_args__ = (Index("ix_documents_status_created_dt", "status", "created_dt"),)
 
     # --- Primary Key ---
     id: Mapped[uuid.UUID] = mapped_column(
@@ -72,6 +74,11 @@ class Document(Base):
     token_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     indexed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Ingestion queue bookkeeping (app/ingestion/repository.py). attempt_count is bumped on
+    # every claim and doubles as a fencing token: a worker whose lease expired cannot
+    # overwrite the row once another worker has re-claimed it.
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    processing_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # --- Extracted Content ---
     raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -98,3 +105,7 @@ class Document(Base):
     modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    @property
+    def has_summary(self) -> bool:
+        return self.summary is not None

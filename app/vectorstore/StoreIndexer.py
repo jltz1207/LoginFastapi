@@ -21,18 +21,39 @@ class StoreIndexer:
             {"tenant_id": tenant_id},
         ]}
 
-    def add_documents(self, docs: list[Document], tenant_id: str, user_id: str, metadata: dict | None = None):
+    def add_documents(
+        self,
+        docs: list[Document],
+        tenant_id: str,
+        user_id: str,
+        metadata: dict | None = None,
+        ids: list[str] | None = None,
+    ):
         metadata = metadata or {}
-        chunks = [Document(page_content = doc.page_content, metadata= metadata | doc.metadata) for doc in docs]
+        # Scope metadata wins over whatever the loader put on the chunk, so a loader key
+        # can never overwrite tenant_id / user_id / knowledge_base_id / document_id.
+        chunks = [Document(page_content = doc.page_content, metadata= doc.metadata | metadata) for doc in docs]
         try:
             user_collection = self.collection_manager.get_or_create_collection(user_id=user_id, tenant_id=tenant_id)
-            user_collection.add_documents(chunks)
+            # langchain_chroma upserts, so deterministic ids make a re-run overwrite
+            # instead of adding a second copy of every chunk.
+            user_collection.add_documents(chunks, ids=ids)
         finally:
             # Notify even if the write failed midway: Chroma may hold a partial write.
             # Runs on the writing thread, after the write, so a cache rebuilt on notify
             # can never miss it (see app/vectorstore/events.py).
             for knowledge_base_id in sorted({chunk.metadata.get("knowledge_base_id") for chunk in chunks} - {None}):
                 notify_kb_changed(tenant_id, user_id, knowledge_base_id)
+
+    def delete_document_chunks(self, tenant_id: str, user_id: str, knowledge_base_id: str, document_id: str) -> None:
+        # Always scoped: even a wrong document_id cannot reach another tenant/user/kb.
+        where = self.scope_filter(tenant_id, user_id, knowledge_base_id)
+        where["$and"].append({"document_id": document_id})
+        try:
+            user_collection = self.collection_manager.get_or_create_collection(user_id=user_id, tenant_id=tenant_id)
+            user_collection.delete(where=where)
+        finally:
+            notify_kb_changed(tenant_id, user_id, knowledge_base_id)
 
     def get_dense_retriever(
         self,

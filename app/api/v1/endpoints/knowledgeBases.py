@@ -1,27 +1,24 @@
 import asyncio
 from pathlib import Path
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from app.core.storage.fileStorage import upload_file
-from app.core.config import settings
+from app.core.storage.fileStorage import delete_file, upload_file
+from app.ingestion.worker import notify_ingestion_worker
 from app.db.session import get_db
 from app.models import User
 from app.models.asistantKnowledgeBase import AsistantKnowledgeBase
 from app.models.document import Document, IngestionStatus
-from app.rag.cleaning.data_cleaning import clean_chunks, clean_extracted_documents
 from app.rag.loaders.base_loader import base_loader
 from app.rag.pipelines import create_pipeline
-from app.rag.splitters.chunkerFactory import ChunkerFactory
 from app.schemas import  DocumentUploadResponse
 from app.schemas.documents import DocumentResponse
 from app.schemas.knowledgeBases import KnowledgeBaseCreateRequest, KnowledgeBaseCreateResponse, QueryAsistantRequest, QueryAsistantResponse
 from app.services import jwtService, getCurrentUser
 from app.services.knowledgeBaseService import get_owned_knowledge_base
-from app.utils.token_counter import count_tokens
-from app.vectorstore import get_vector_store_indexer
 from fastapi import UploadFile
 
 router = APIRouter(tags=["KnowledgeBases"])
@@ -54,69 +51,36 @@ async def createKnowledgeBase(requestModel: KnowledgeBaseCreateRequest, db: Asyn
   
   return kb_pydantic
 
-@router.post("/upload", response_model=DocumentUploadResponse)
+@router.post("/upload", response_model=DocumentUploadResponse, status_code=status.HTTP_202_ACCEPTED)
 async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = Form(...), db: AsyncSession = Depends(get_db), current_user: User = Depends(getCurrentUser)):
-  # validation by pydantic
-
-  # check bytes
-  # check extension, inside [pdf,docx]
+  # Only validate, store the file and queue it: load / chunk / embed / summary run in the
+  # ingestion worker (app/ingestion/), which picks up the PENDING row.
   # Outside the try: its `except Exception` would turn this 404 into a 500.
   kb = await get_owned_knowledge_base(db, knowledge_base_id, current_user)
-  knowledge_base_id = str(kb.id)
+  stored = None
   try:
-    # Chroma metadata values must be str/int/float/bool — a UUID object is rejected,
-    # and a UUID that slips into a `where` filter matches nothing without raising.
-    # See docs/id-type-convention-20260827.md.
-    metadata = {
-      "knowledge_base_id": str(knowledge_base_id),
-      "user_id": str(current_user.id),
-      "tenant_id": str(current_user.tenant_id),
-    }
-    allowed_extension = ["pdf", "md", "docx"]
     file_ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
-    if file_ext not in allowed_extension:
+    if file_ext not in base_loader.SUPPORTED_EXTENSIONS:
       raise HTTPException(status_code=400, detail="File extension not allowed.")
 
     file_bytes = await file.read()
     if len(file_bytes) > 10 * 1024 * 1024: # 10 MB
       raise HTTPException(status_code=400, detail="File size is too large. Limit: 10MB.")
 
-    document_list = base_loader.load(file_ext, file_bytes)
-    if document_list is None:
-      raise HTTPException(status_code=400, detail="Unsupported file type for processing.")
-    page_count = len(document_list)
-    factory = ChunkerFactory()
-    recursive_chunk_strategy =factory.create_chunker("recursive")
-    chunking_list = recursive_chunk_strategy.chunk(document_list)
-    chunking_list = clean_chunks(chunking_list)
-    chunk_count = len(chunking_list)
-    chunking_list_str = [doc.page_content for doc in chunking_list]
-    token_count = count_tokens(chunking_list_str, settings.EMBEDDING_PROVIDE_TYPE)
-    store = get_vector_store_indexer()
-    # Off the event loop: add_documents calls the embedding API and writes SQLite.
-    # StoreIndexer notifies the BM25 cache itself, after the write, on the same thread.
-    await asyncio.to_thread(
-      store.add_documents,
-      chunking_list,
-      tenant_id=metadata["tenant_id"],
-      user_id=metadata["user_id"],
-      metadata=metadata,
+    # Stored before the row exists: the worker reads the file back from storage.
+    stored = await asyncio.to_thread(
+      upload_file, current_user.tenant_id, current_user.id, kb.id, file_bytes, file.filename, file.content_type
     )
-    
-    factory.print_chunks_transformation(document_list, chunking_list)
-    # handle upload process
-    result =  upload_file(current_user.tenant_id, current_user.id, knowledge_base_id, file_bytes, file.filename, file.content_type)
-    storage_bucket = result.get("storage_bucket")
-    storage_key = result.get("storage_key")
+    storage_bucket = stored.get("storage_bucket")
+    storage_key = stored.get("storage_key")
     if not storage_bucket or not storage_key:
       raise HTTPException(
         status_code=500,
         detail="File upload failed: storage location could not be determined",
     )
 
-    # save to database
     new_doc = Document(
-      knowledge_base_id=knowledge_base_id,
+      knowledge_base_id = kb.id,
       user_id = current_user.id,
       tenant_id = current_user.tenant_id,
       filename = Path(file.filename).name,
@@ -125,24 +89,44 @@ async def uploadDocument(file: UploadFile = File(...), knowledge_base_id: str = 
       file_size_bytes = len(file_bytes),
       storage_bucket = storage_bucket,
       storage_key = storage_key,
-      status = IngestionStatus.INDEXED,
-      chunk_count = chunk_count,
-      token_count = token_count,
-      raw_text = "\n.".join(chunking_list_str),
-      page_count = page_count,
+      status = IngestionStatus.PENDING,
       created_by = current_user.username,
     )
     db.add(new_doc)
     await db.commit()
+    stored = None  # the row owns the file now
     await db.refresh(new_doc)
+    notify_ingestion_worker()
     response_doc = DocumentResponse.model_validate(new_doc)
-    response = DocumentUploadResponse(success=True, message="upload success", document=response_doc)
+    response = DocumentUploadResponse(success=True, message="upload accepted", document=response_doc)
+  except HTTPException:
+    raise
   except SQLAlchemyError as exc:
     raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
   except Exception as exc:
     raise HTTPException(status_code=500, detail=f"Error: {exc}") from exc
+  finally:
+    if stored and stored.get("storage_key"):
+      # No row points at the file, so nothing would ever read or delete it.
+      await asyncio.to_thread(delete_file, stored.get("storage_bucket"), stored["storage_key"])
 
   return response
+
+
+@router.get("/documents/{document_id}", response_model=DocumentResponse)
+async def getDocument(document_id: UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(getCurrentUser)):
+  # Ingestion status lookup. Scoped to the caller; 404 rather than 403 so a foreign id
+  # does not reveal that it exists.
+  stmt = select(Document).where(
+    Document.id == document_id,
+    Document.tenant_id == current_user.tenant_id,
+    Document.user_id == current_user.id,
+    Document.deleted_at.is_(None),
+  )
+  doc = (await db.execute(stmt)).scalars().first()
+  if doc is None:
+    raise HTTPException(status_code=404, detail="Document not found.")
+  return DocumentResponse.model_validate(doc)
 
 
 @router.post("/query", response_model=QueryAsistantResponse)

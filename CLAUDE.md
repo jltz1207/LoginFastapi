@@ -94,10 +94,22 @@ Prompt objects live in `app/rag/prompts/` as module-level constants (e.g. `CONDE
 
 ### Document Ingestion (`POST /api/v1/knowledgeBases/upload`)
 
-Flow: upload → `base_loader.load()` → `get_recursive_chunks()` → `StoreIndexer.add_documents()` → `upload_file()` (local storage) → save `Document` ORM record. Supported extensions: `pdf`, `md`, `docx`. Limit: 10 MB.
+Ingestion runs in the background (`app/ingestion/`). The upload endpoint only validates, stores the file and queues it:
+
+- **Upload** (returns **202**): `get_owned_knowledge_base()` → extension check (`base_loader.SUPPORTED_EXTENSIONS`: `pdf`, `md`; no `docx` loader exists) → 10 MB limit → `upload_file()` → insert `Document(status=PENDING)` → `notify_ingestion_worker()`.
+- **Status**: `GET /api/v1/knowledgeBases/documents/{document_id}`, scoped to the caller's tenant + user (404 otherwise). Returns `status`, `error_message`, `chunk_count`, `indexed_at`, `has_summary`.
+- **Queue**: the `documents` table itself (`app/ingestion/repository.py`). The worker claims a `PENDING` row with `FOR UPDATE SKIP LOCKED` and bumps `attempt_count`. Every later write is fenced on `status = PROCESSING AND attempt_count = <claimed>`. A `PROCESSING` row older than `INGESTION_LEASE_SECONDS` is requeued, or set to `FAILED` after `INGESTION_MAX_ATTEMPTS`.
+- **Worker** (`app/ingestion/worker.py`): an asyncio loop started by `ingestion_worker_lifespan()` **inside the API process**. It runs there on purpose: BM25 invalidation (`app/vectorstore/events.py`) only reaches the same process, and Chroma is a local `PersistentClient`. Set `INGESTION_WORKER_ENABLED=false` to turn it off.
+- **Processing** (`process_document()` in `app/ingestion/processor.py`): takes only `document_id` and reads tenant / user / kb / storage key from the DB row. Steps: download → `base_loader.load()` → `raw_text` (cleaned loader output, not joined chunks) → chunk → summary → `StoreIndexer.delete_document_chunks()` → `StoreIndexer.add_documents(ids=["{document_id}:{i}"])` → `INDEXED` + `indexed_at`.
+  - Any exception sets `FAILED` with `error_message` and deletes the document's chunks.
+  - Chroma is written last, so chunks are searchable before `INDEXED` only for one DB commit.
+  - Chunk metadata carries `document_id`. Re-runs delete and then upsert, so they never duplicate chunks.
+- **Summary** (`app/ingestion/summarizer.py`): map-reduce over `raw_text` with `LLMFactory.get_model()` and the `DOCUMENT_SUMMARY_*_PROMPT` constants. A summary failure does **not** fail the document: it is still `INDEXED`, with `summary` NULL (GLOBAL skips it) and `error_message` set to `summary failed: ...`. If a summary already exists, a retry skips generating it.
+- **Backfill**: `uv run python -m scripts.backfill_document_summaries [--apply]` generates summaries for `INDEXED` rows that have none. It does not touch Chroma.
 
 ### Startup Sequence (`app/main.py`)
 
 1. `load_dotenv(".env.{APP_ENV}")` — must run first so `LANGCHAIN_*` vars reach `os.environ` before LangChain imports
 2. `setup_logging()` — configures structlog
 3. `checkpointer_lifespan()` — opens the async Postgres checkpointer connection and runs `saver.setup()` (creates LangGraph checkpoint tables)
+4. `ingestion_worker_lifespan()` — starts the background ingestion loop; on shutdown it is cancelled, and a document cut off mid-run is requeued once its lease expires

@@ -17,7 +17,12 @@ class DocumentResponse(BaseModel):
   file_size_bytes: int
   mime_type: str
   status: IngestionStatus
-  page_count: int
+  # Filled in by the ingestion worker, so None while PENDING / PROCESSING.
+  page_count: Optional[int] = None
+  chunk_count: Optional[int] = None
+  error_message: Optional[str] = None
+  indexed_at: Optional[datetime] = None
+  has_summary: bool = False
   created_dt: Optional[datetime]
   created_by: Optional[str]
   modified_dt: Optional[datetime]

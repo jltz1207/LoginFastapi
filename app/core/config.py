@@ -50,6 +50,19 @@ class Settings(BaseSettings):
     TAVILY_API_KEY: str = ""
     GRAPH_STRATEGY: int = 2  # Default: GraphStrategy.SEARCH
 
+    # Ingestion worker (app/ingestion/). Runs inside the API process, see app/main.py.
+    INGESTION_WORKER_ENABLED: bool = True
+    INGESTION_POLL_INTERVAL_SECONDS: float = 5.0  # fallback; upload wakes the worker directly
+    # A PROCESSING row older than this is treated as abandoned (worker died) and requeued.
+    # Must exceed the longest expected ingestion, or a live job gets claimed twice.
+    INGESTION_LEASE_SECONDS: int = 1800
+    INGESTION_MAX_ATTEMPTS: int = 3
+
+    # Document summary (map-reduce over documents.raw_text)
+    SUMMARY_SECTION_CHARS: int = 12_000
+    SUMMARY_BATCH_SIZE: int = 8
+    SUMMARY_MAX_CONCURRENCY: int = 4
+
     # BudgetLimits
     MAX_TOOL_CALLS: int = 3
     MAX_TOKENS: int = 20_000
