@@ -1,6 +1,6 @@
 # Code review：`app/routing/branches/metadata.py`
 
-> **狀態：P0-1 ～ P0-4、P1-1 已修（commit `abbaaf2`）；P1-2 ～ P1-4、P2 已修（2026-10-15，未 commit）；剩 Postgres integration test 待補。**
+> **狀態：P0-1 ～ P0-4、P1-1 已修（commit `abbaaf2`）；P1-2 ～ P1-4（commit `cf214d9`）、P2（commit `bf85be7`）已修；Postgres 與真實 LLM 的實測之後另外進行。**
 > Review 日期：2026-10-15。
 > 對照版本：SQLAlchemy 2.0.51（`uv.lock`）。以下結論來自閱讀程式碼，**未實際執行**。
 
@@ -219,7 +219,7 @@ extractor（LLM）出錯或資料庫出錯時，例外會直接往上拋，整�
 限制：
 
 - 沒有對 Postgres 實測（worktree 只有 `.env.prod`，刻意不連）。SQLite 能驗證表名、欄位與 window function，
-  但驗不到 Postgres 特有行為，例如 `uuid` 欄位和字串參數比較、`timestamptz` 和日期字串比較。原計畫的 `EXPLAIN` integration test 仍待補。
+  但驗不到 Postgres 特有行為，例如 `uuid` 欄位和字串參數比較、`timestamptz` 和日期字串比較。Postgres 實測之後另外進行。
 - 依指示沒有跑 migration；這次改動也不需要 migration。
 
 ## 實作結果：P1-2 ～ P1-4（2026-10-15）
@@ -279,7 +279,7 @@ extractor 與 DB 失敗的降級、DB 錯誤不進 trace、缺 KB 仍 fail fast�
 
 驗證：`pytest tests/routing tests/auth` → **37 passed**。
 
-另外發現：`app/routing/PLAN.md:55-59` 仍寫著「`BY_VERSION` 暫時移除」，和目前的實作不一致，尚未更新。
+`app/routing/PLAN.md` 的 M-INT6 段落原本寫著「`BY_VERSION` 暫時移除」，已更新成目前的實作。
 
 ## 做得好的地方
 
@@ -294,6 +294,4 @@ extractor 與 DB 失敗的降級、DB 錯誤不進 trace、缺 KB 仍 fail fast�
 2. [x] 修 P0-2 到 P0-4，讓查詢能跑通，並補測試。
 3. [x] 處理 P1（soft delete、參數 schema、日期邊界、錯誤處理）。
 4. [x] P2 收尾。
-5. [ ] 對 dev Postgres 跑白名單 SQL 的 `EXPLAIN` integration test。
-6. [ ] 用真實 LLM 確認 Gemini structured output 能產出 `date` 欄位。
-7. [ ] 更新 `app/routing/PLAN.md` 中過時的 METADATA 說明。
+5. [x] 更新 `app/routing/PLAN.md` 中過時的 METADATA 說明。
