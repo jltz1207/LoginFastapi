@@ -1,4 +1,6 @@
-"""META 分支：系統性問題（"你能做什麼"類），固定模板回覆或回傳 trace，**不即時生成**。
+"""META 分支：系統性問題（"你能做什麼"類），固定模板回覆，**不即時生成**。
+
+不回傳 `state.trace`：路由除錯走 LangSmith / log，不在聊天介面對使用者揭露內部紀錄。
 
 修正職責接反問題：這個檔案先前放的是 `sql_query_node`（白名單參數化 SQL 查詢），
 那屬於 METADATA 分支，已搬到 `routing/branches/metadata.py`。這裡改回它原本該做的
@@ -23,15 +25,8 @@ _FIXED_REPLIES = {
     "default": "這是一個系統性問題。我目前只能針對知識庫內容或常識性問題作答，更多系統說明請參考文件。",
 }
 
-_TRACE_KEYWORDS = ["trace", "追蹤", "路由紀錄", "debug"]
 _IDENTITY_KEYWORDS = ["你是誰", "who are you"]
 _CAPABILITY_KEYWORDS = ["你能做什麼", "你可以做什麼", "什麼功能", "what can you"]
-
-
-def _format_trace(trace: list[str]) -> str:
-    if not trace:
-        return "目前沒有可顯示的路由追蹤紀錄。"
-    return "路由追蹤：\n" + "\n".join(f"- {entry}" for entry in trace)
 
 
 def _matches(query: str, query_lower: str, keywords: list[str]) -> bool:
@@ -45,9 +40,7 @@ class MetaBranch:
         query = state.resolved_query
         query_lower = query.lower()
 
-        if _matches(query, query_lower, _TRACE_KEYWORDS):
-            answer = _format_trace(state.trace)
-        elif _matches(query, query_lower, _IDENTITY_KEYWORDS):
+        if _matches(query, query_lower, _IDENTITY_KEYWORDS):
             answer = _FIXED_REPLIES["identity"]
         elif _matches(query, query_lower, _CAPABILITY_KEYWORDS):
             answer = _FIXED_REPLIES["capabilities"]
