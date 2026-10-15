@@ -84,20 +84,13 @@ def download_file(storage_bucket: str, storage_key: str) -> bytes:
  
     return abs_path.read_bytes()
 
-def download_file(storage_bucket: str, storage_key: str) -> bytes:
+
+def delete_file(storage_bucket: str, storage_key: str) -> None:
     """
-    Read raw bytes from disk.
- 
-    Called by the ingestion pipeline to extract text from the original file.
-    storage_bucket is ignored locally (we always resolve from STORAGE_ROOT)
-    but kept in the signature for S3 interface parity.
+    Remove a stored file. Missing files are ignored.
+
+    Used to roll back upload_file() when the documents row could not be saved.
     """
     abs_path = _resolve_path(storage_key)
- 
-    if not abs_path.exists():
-        raise FileNotFoundError(
-            f"File not found on local disk: {abs_path}. "
-            "If you're running multiple workers or servers, switch to S3."
-        )
- 
-    return abs_path.read_bytes()
+    abs_path.unlink(missing_ok=True)
+    logger.info("file_deleted_local", path=str(abs_path))

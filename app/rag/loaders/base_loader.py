@@ -4,6 +4,9 @@ from app.rag.loaders.md_loader import md_parser_from_bytes
 from app.rag.loaders.pdf_loader import pdf_parser_from_bytes
 
 class base_loader:
+    # Upload rejects anything else up front, so the worker never gets a file it cannot load.
+    SUPPORTED_EXTENSIONS = ("pdf", "md")
+
     @staticmethod
     def load(file_ext:str , file_bytes:bytes):
         if file_ext.strip() ==  "pdf":

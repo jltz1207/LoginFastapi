@@ -32,7 +32,7 @@ class _SlowCollection:
         self.log, self.seconds, self.fail = log, seconds, fail
         self.write_threads: list[int] = []
 
-    def add_documents(self, docs):
+    def add_documents(self, docs, ids=None):
         self.write_threads.append(threading.get_ident())
         self.log.append("write-start")
         time.sleep(self.seconds)  # stands in for the embedding API call + SQLite write

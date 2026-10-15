@@ -16,11 +16,12 @@ from app.db.session import engine
 from app.middleware.request_logger import RequestLoggerMiddleware
 from app.models import Base  # Import to register models
 from app.agent.persistence.client import checkpointer_lifespan
+from app.ingestion.worker import ingestion_worker_lifespan
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with checkpointer_lifespan():
+    async with checkpointer_lifespan(), ingestion_worker_lifespan():
         yield
 
 tags_metadata = [
