@@ -54,10 +54,16 @@ AsistAi 目前完全沒有 ingestion worker（`api/v1/endpoints/knowledgeBases.p
 
 `routing/branches/metadata.py` 的 `_WHITELISTED_QUERIES` 假設 `document`/`document_chunk` 表有 `author`、`document_type`、`version` 欄位；但 AsistAi 實際的 `Document` model（`app/models/document.py`）只有 `filename`/`file_extension`/`mime_type`/`created_dt`/`indexed_at`/`chunk_count` 等欄位，**沒有 `author` 欄位，也沒有獨立的 `document_chunk` 表**（chunk 內容只存在 Chroma，不落地 Postgres）。處理方式：
 
-- 白名單縮減成 AsistAi 實際能回答的兩種：`BY_DATE_RANGE`（用 `created_dt`／`indexed_at`）、`BY_DOCUMENT_TYPE`（用 `file_extension`）。
-- `BY_AUTHOR`、`BY_VERSION` 暫時移除出 `MetadataQueryType`（沒有對應欄位/表可查），記一筆待辦：「若後續需要，得先幫 `Document` 加 `author` 欄位、評估是否要真的落地 `document_chunk` 表」——不生造假資料。
-- 執行層：`PsycopgQueryExecutor`（獨立開一條 psycopg 連線）改成用 AsistAi 既有的 `AsyncSessionLocal`/`get_db()`（SQLAlchemy async session）執行參數化 `select()`，不另外維護第二條到同一個 Postgres 的連線池。SQL 文字仍然全部是模組層常數，只是換成 SQLAlchemy `text()` + bind params 或 ORM `select()`，「禁止 text-to-SQL」的鐵律不變。
-- `GeminiMetadataQueryExtractor` 的 structured-output 抽取邏輯不變（只是 enum 選項變少）。
+> 2026-10-15 更新：已依下列內容實作，細節與測試結果見 [metadata-branch-review-20261015.md](../../docs/plans/in-progress/metadata-branch-review-20261015.md)。
+
+- 白名單只查 `documents` 現有欄位，共三種：
+  - `BY_DATE_RANGE`：`created_dt`，半開區間（結束日期當天整天都算）。
+  - `BY_DOCUMENT_TYPE`：`file_extension`（`pdf`/`md`/`docx`）。
+  - `BY_VERSION`：不另建表；同一 KB 內同一 `filename` 的每次上傳視為一個版本，版本號用 `ROW_NUMBER() OVER (ORDER BY created_dt)` 算。
+- `BY_AUTHOR` 移除：`Document` 沒有 author 欄位，而且所有查詢都已限定 `user_id` 為目前使用者，依作者查沒有意義。上傳 endpoint 已改成寫入 `created_by`，KB 改成多人共用時可再加回。
+- 所有查詢都排除 soft delete（`deleted_at IS NULL`）。
+- 執行層：`PsycopgQueryExecutor` 已移除，改用 AsistAi 既有的 `AsyncSessionLocal` 執行 `text()` + `:name` bind params。SQL 文字仍然全部是模組層常數，「禁止 text-to-SQL」的鐵律不變。
+- extractor（`LLMMetadataQueryExtractor`，走 `LLMFactory`）輸出固定型別欄位（`start_date`、`end_date`、`file_extension`、`filename`），不再是任意 `dict`；參數不完整、extractor 或 DB 失敗時降級回應並記入 `trace`。
 
 ## M-INT7：MULTI_HOP 分支
 
@@ -94,7 +100,7 @@ AsistAi 目前完全沒有 ingestion worker（`api/v1/endpoints/knowledgeBases.p
    - META/NO_RETRIEVAL：零檢索，答案一次性送達。
    - METADATA：丟一個「這份文件是什麼時候上傳的」，確認查到 `created_dt`，且換一個假造的 `knowledge_base_id` 參數也查不到別的知識庫資料（租戶隔離）。
    - GLOBAL：先上傳一份文件觸發 Celery `summarize_document`，等 worker 跑完後問「這批文件在講什麼」，確認能拿到摘要。
-   - 確認 `trace` 內容（透過問「debug/追蹤」觸發 META 分支的 trace 回傳）能看到完整的 resolve→route→branch 記錄。
+   - 確認 `trace` 內容能看到完整的 resolve→route→branch 記錄：在 LangSmith 檢查該次 run 最終 state 的 `trace` 欄位（META 分支已不回傳 trace，見 [meta-branch-review-20261015.md](../../docs/plans/finished/meta-branch-review-20261015.md)）。
 3. **回歸**：把 `GRAPH_STRATEGY` 切回 `2`（`SEARCH`），確認舊路徑完全不受影響（新程式碼不應該改到 `SearchingRagGraphFactory`/`agent/nodes/*` 本身，只是把它們掛成子圖節點複用）。
 
 ---
