@@ -3,7 +3,8 @@ import os
 
 class Settings(BaseSettings):
     # Database - PostgreSQL (URL-encode special chars in password: @ = %40)
-    DATABASE_URL: str = "postgresql+psycopg://postgres:password@localhost:5432/AsistAi"
+    # Required, no default: set it in .env.dev / .env.prod so credentials never live in code.
+    DATABASE_URL: str
 
     # Optional: JWT secret, etc.
     SECRET_KEY: str = "a-string-secret-at-least-256-bits-long"
