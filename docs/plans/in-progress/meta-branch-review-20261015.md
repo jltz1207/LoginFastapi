@@ -1,6 +1,6 @@
 # Code review：`app/routing/branches/meta.py`
 
-> **狀態：已移除 trace 回傳（commit `1bd1f49`，P0-1、P0-2、P1-1、P1-3 因此結案）；P0-3、P2-1 已修，P2-4 已補 META 測試；P1-2、P2-2、P2-3 尚未修正。**
+> **狀態：已移除 trace 回傳（commit `1bd1f49`，P0-1、P0-2、P1-1、P1-3 因此結案）；P0-3、P2-1、P2-4 已修（commit `ff0e023`）；P1-2 已修；P2-2、P2-3 尚未修正。**
 > Review 日期：2026-10-15。
 > P0-3 的結論已用 `tests/routing/test_meta_branch.py` 實測（Python 3.12.13、pytest 9.1.1，`tests/` 全部 148 passed）；其餘結論來自閱讀程式碼，未實際執行。
 
@@ -136,7 +136,7 @@ flowchart LR
 > `RoutedGraphFactory.build()` 改成 `compile(checkpointer=...)`，`trace` 可能跨輪無限累積
 > （推論，要實測 LangGraph 對未在 input 中提供的欄位是否沿用 checkpoint 值）。這跟 META 無關，但仍需處理。
 
-### [ ] P1-2｜capabilities 回覆描述了不存在的功能
+### [x] P1-2｜capabilities 回覆描述了不存在的功能
 
 `meta.py` 的 `_FIXED_REPLIES["capabilities"]` 宣稱能「查詢文件的**作者**/日期等屬性」，但 METADATA 分支目前只支援
 `BY_DATE_RANGE` / `BY_DOCUMENT_TYPE` / `BY_VERSION`（`metadata.py:46-48`），`documents` 表沒有 author 欄位
@@ -149,6 +149,27 @@ flowchart LR
 - 文字改成實際可用的功能：依上傳日期 / 檔案類型 / 同檔名的上傳版本查文件。
 - 移除「作者」；GLOBAL 是否列出，等 summary 生成落地後再決定（先寫成「對知識庫內容做摘要」並在 code comment 標註依賴）。
 - 在 `MetaIntent.CAPABILITIES` 旁加 comment：新增/移除 route 或 METADATA query type 時要同步更新這段文字。
+
+#### P1-2 實作結果（2026-10-15）
+
+查證時發現 `app/` 裡沒有任何地方寫入 `Document.summary`（搜尋 `summarize_document` 無結果），
+`fetch_document_summaries()` 又只取 `summary IS NOT NULL` 的文件，所以 GLOBAL 目前**一律**回
+`_NO_SUMMARIES_MESSAGE`。因此改成**完全不列摘要**，而不是原計畫的「先寫成對知識庫內容做摘要」。
+
+`_FIXED_REPLIES[MetaIntent.CAPABILITIES]` 改為逐行列出實際可用的功能：
+
+| 回覆文字 | 對應 route |
+|---|---|
+| 回答知識庫文件裡的具體內容 | LOOKUP |
+| 比較多份文件，或回答需要串連多處內容的問題 | MULTI_HOP |
+| 依上傳日期、檔案類型（pdf / md / docx），或同一檔名的歷次上傳版本查文件 | METADATA（`BY_DATE_RANGE` / `BY_DOCUMENT_TYPE` / `BY_VERSION`） |
+| 直接回答不需要查知識庫的常識性問題 | NO_RETRIEVAL |
+
+- 程式碼 comment 記錄上述對應，以及 GLOBAL 不列的原因；ingestion 開始產生 summary 後要補回。
+- `meta.py` 的 `ROUTER_VERSION` → `meta-v3`。
+- `meta.py` 不 import `metadata.py`（後者依賴 DB / LLM），改由測試
+  `test_capabilities_reply_only_claims_supported_metadata_queries` 守住同步：`_ALLOWED_FILE_EXTENSIONS`
+  每個副檔名都要出現在回覆裡，且回覆不得含「作者」、「摘要」。`tests/` 全部 149 passed。
 
 ### [x] P1-3｜substring 比對造成誤判（trace 部分已結案，其餘併入 P0-3）
 
@@ -203,12 +224,12 @@ P1-2 修改 capabilities 文字時，這支測試比對的是 `_FIXED_REPLIES[..
 ```mermaid
 flowchart LR
     X["✓ 移除 trace<br/>(P0-1 / P0-2 / P1-1 / P1-3)"] --> P03["✓ P0-3 meta_intents.py<br/>+ P2-1 + P2-4"]
-    P03 --> P12[P1-2 capabilities 文字]
+    P03 --> P12["✓ P1-2 capabilities 文字"]
     P03 --> P23[P2-3 docstring]
     P03 --> P22["P2-2 英文回覆（待決定）"]
 ```
 
 1. ~~移除 trace 回傳~~（已完成，commit `1bd1f49`）。
-2. ~~P0-3 抽出 `meta_intents.py`，同時處理 P2-1、P2-4~~（已完成）。
-3. P1-2 文字修正、P2-3 docstring；P2-2 視決定而定。
+2. ~~P0-3 抽出 `meta_intents.py`，同時處理 P2-1、P2-4~~（已完成，commit `ff0e023`）。
+3. ~~P1-2 文字修正~~（已完成）；P2-3 docstring；P2-2 視決定而定。
 4. `uv run pytest tests/routing` 全綠。

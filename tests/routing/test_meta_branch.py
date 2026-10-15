@@ -77,6 +77,17 @@ def test_non_meta_queries_do_not_match(query):
     assert classify_meta_intent(query) is None
 
 
+def test_capabilities_reply_only_claims_supported_metadata_queries():
+    # `meta.py` must not import `metadata.py` (DB / LLM deps), so this test keeps the text in sync.
+    from app.routing.branches.metadata import _ALLOWED_FILE_EXTENSIONS
+
+    reply = _FIXED_REPLIES[MetaIntent.CAPABILITIES]
+    for ext in _ALLOWED_FILE_EXTENSIONS:
+        assert ext in reply
+    assert "作者" not in reply  # `documents` has no author column
+    assert "摘要" not in reply  # GLOBAL has no summaries until ingestion generates them
+
+
 def test_unmatched_query_gets_default_reply():
     assert _run("請介紹一下")["answer"] == _DEFAULT_REPLY
 
