@@ -1,7 +1,7 @@
 # BM25 cache 不再回舊資料：寫入自動失效 + TTL 保底
 
 > 建立日期：2026-10-09。對照 commit `6f16238`。
-> 背景分析見 [`vectorstore-retriever-structure-20261009.md`](../../vectorstore/vectorstore-retriever-structure-20261009.md) 的 `bm25_index.py` 段落與已知缺陷 3、4。
+> 背景分析見 [`vectorstore-retriever-structure-20261009.md`](../../docs/vectorstore/vectorstore-retriever-structure-20261009.md) 的 `bm25_index.py` 段落與已知缺陷 3、4。
 >
 > **狀態：✅ 已完成（2026-10-09，未 commit）。** 測試 37 passed（原 30 + 新增 7 + 改寫）。
 >

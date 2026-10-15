@@ -1,7 +1,7 @@
 # Cascade router：LLM 層的決定永遠被丟棄
 
 > **狀態：尚未開始修正。**
-> 發現日期：2026-10-15（review META 分支時順帶發現，見 [meta-branch-review-20261015.md](meta-branch-review-20261015.md)）。
+> 發現日期：2026-10-15（review META 分支時順帶發現，見 [meta-branch-review-20261015.md](../finished/meta-branch-review-20261015.md)）。
 > 查證日期：2026-10-15。§2 的結論已用假 embedding 模擬實測（Python 3.12.13，程式碼在 §2.2）；
 > 真實 Gemini embedding 下的分佈、延遲數字**未實測**。
 

@@ -440,7 +440,7 @@ metadata = {
 三個值都必須是 `str`——型別錯 Chroma 不會 raise，只會靜默回 0 筆。見 `docs/id-type-convention-20260827.md`。
 
 route 用 `asyncio.to_thread` 把 `store.add_documents(...)` 丟到 worker thread（`knowledgeBases.py:93-99`）；
-BM25 cache 的失效由 `StoreIndexer` 自己負責（2026-10-09 起，見 `docs/plans/finished/bm25-cache-staleness-20261009.md`）：
+BM25 cache 的失效由 `StoreIndexer` 自己負責（2026-10-09 起，見 `plans/finished/bm25-cache-staleness-20261009.md`）：
 
 - `StoreIndexer.add_documents()`（`StoreIndexer.py:24-35`）寫入後在 `finally` 裡，對這次寫入涉及的每個 `knowledge_base_id` 呼叫
   `app/vectorstore/events.py` 的 `notify_kb_changed()`；`BM25IndexProvider` 在建立時用 `on_kb_changed(provider.invalidate)` 註冊。

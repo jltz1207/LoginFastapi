@@ -1,7 +1,7 @@
 # Worker 和 API 跑在同一個 process
 
 > 查證日期：2026-10-14。Windows 11、Python 3.12.13、FastAPI 0.140.0、Starlette 1.3.1、uvicorn 0.51.0。
-> 背景：document ingestion 背景化的計畫（`docs/plans/in-progress/background-ingestion-20261014.md`）建議「Postgres 當 queue，worker 在 API process 的 lifespan 裡跑」。這篇說明這件事怎麼做到、為什麼可行，以及限制在哪。
+> 背景：document ingestion 背景化的計畫（`plans/in-progress/background-ingestion-20261014.md`）建議「Postgres 當 queue，worker 在 API process 的 lifespan 裡跑」。這篇說明這件事怎麼做到、為什麼可行，以及限制在哪。
 
 ## 結論
 

@@ -99,4 +99,4 @@ flowchart TD
 「這份文件提到什麼功能」這種知識庫問題誤送到 META。所以 pattern 一律錨定在「你」/「系統」，並且要遞增
 `rule.py` 的 `ROUTER_VERSION`。
 
-完整 review 紀錄見 [meta-branch-review-20261015.md](../../plans/finished/meta-branch-review-20261015.md)。
+完整 review 紀錄見 [meta-branch-review-20261015.md](../../../plans/finished/meta-branch-review-20261015.md)。

@@ -7,7 +7,7 @@
 ## Context
 
 Review 對象是 `app/routing/branches/meta.py`（META 分支）：系統性問題（「你能做什麼」、「你是誰」）
-用固定模板回覆，**不呼叫 LLM**。分支的用途說明見 [what-meta-branch-does-20261015.md](../../route/meta/what-meta-branch-does-20261015.md)。
+用固定模板回覆，**不呼叫 LLM**。分支的用途說明見 [what-meta-branch-does-20261015.md](../../docs/route/meta/what-meta-branch-does-20261015.md)。
 
 對照檔案：`app/routing/router/rule.py`、`app/routing/router/embedding.py`、`app/routing/router/llm.py`、
 `app/routing/taxonomy.py`、`app/agent/graphs/routed_rag.py`、`app/agent/state.py`、
