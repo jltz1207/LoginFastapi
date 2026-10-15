@@ -21,3 +21,5 @@ storages/
 .env.dev
 
 .env.prod
+
+.claude/worktrees/
