@@ -1,10 +1,9 @@
 """META 分支：系統性問題（"你能做什麼"類），固定模板回覆，**不即時生成**。
 
-不回傳 `state.trace`：路由除錯走 LangSmith / log，不在聊天介面對使用者揭露內部紀錄。
+用 `meta_intents.classify_meta_intent()`（與 rule router 共用）選模板，依使用者原文選中 / 英文，
+完全不呼叫任何 LLM，也不碰知識庫或資料庫。
 
-修正職責接反問題：這個檔案先前放的是 `sql_query_node`（白名單參數化 SQL 查詢），
-那屬於 METADATA 分支，已搬到 `routing/branches/metadata.py`。這裡改回它原本該做的
-事——純字串模板 + 關鍵字判斷，完全不呼叫任何 LLM。
+不回傳 `state.trace`：路由除錯走 LangSmith / log，不在聊天介面對使用者揭露內部紀錄。
 """
 
 from __future__ import annotations

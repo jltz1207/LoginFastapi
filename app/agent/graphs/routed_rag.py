@@ -1,15 +1,10 @@
 """LangGraph StateGraph 組裝：把 M1（resolver/taxonomy）、M2/M3（router cascade +
 fallback chain）、M4（六個 leaf branch）接成一張完整的圖。
 
-修正了先前 stub 版本的已知技術債（見 `progress.md` 現況盤點）：
-- 移除已刪除的 `OUT_OF_SCOPE`/`refuse`，改成完整的 6 類對照表（含 `META`/`NO_RETRIEVAL`）。
-- `resolve_query`/`route_query` 從 `pass` stub 改成真正接上 M1/M2/M3 的實作。
-- `RoutedAgentState.trace` 由欄位預設值統一給 `[]`，不會是 undefined。
-- `checkpointer` 不再是未定義的裸名字：`AsyncSqliteSaver` 是 async context manager，
-  不能在模組載入時就同步建好，所以改成 `graph_app()` 這個 async context manager；
-  測試/一次性呼叫可以用 `compile_app()`（不落地存檔）。
-- import 改用 M4 修正後的正確名字：`metadata_query_node`（原本錯接成 `sql_query_node`
-  from `meta.py`）、`global_summary_node`（原本 `lobal_summary_node` typo）。
+    START → resolve → route ─┬→ lookup / global / metadata / multi_hop / no_retrieval / meta → END
+                             └ confidence < CONFIDENCE_THRESHOLD 一律走 lookup（select_branch）
+
+`RoutedGraphFactory.build()` 的每個節點都可注入假物件，測試不需要真的打 Gemini/Chroma/PostgreSQL。
 """
 
 from __future__ import annotations

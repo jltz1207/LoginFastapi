@@ -1,6 +1,6 @@
 # Code review：`app/routing/branches/meta.py`
 
-> **狀態：已移除 trace 回傳（commit `1bd1f49`，P0-1、P0-2、P1-1、P1-3 因此結案）；P0-3、P2-1、P2-4 已修（commit `ff0e023`）；P1-2 已修（commit `0f98fbe`）；P2-2 已修；P2-3 尚未修正。**
+> **狀態：已移除 trace 回傳（commit `1bd1f49`，P0-1、P0-2、P1-1、P1-3 因此結案）；P0-3、P2-1、P2-4 已修（commit `ff0e023`）；P1-2 已修（commit `0f98fbe`）；P2-2 已修（commit `b98788b`）；P2-3 已修。全部項目完成，plan 移到 `finished/`。**
 > Review 日期：2026-10-15。
 > P0-3 的結論已用 `tests/routing/test_meta_branch.py` 實測（Python 3.12.13、pytest 9.1.1，`tests/` 全部 148 passed）；其餘結論來自閱讀程式碼，未實際執行。
 
@@ -140,7 +140,7 @@ flowchart LR
 
 `meta.py` 的 `_FIXED_REPLIES["capabilities"]` 宣稱能「查詢文件的**作者**/日期等屬性」，但 METADATA 分支目前只支援
 `BY_DATE_RANGE` / `BY_DOCUMENT_TYPE` / `BY_VERSION`（`metadata.py:46-48`），`documents` 表沒有 author 欄位
-（見 [metadata-branch-review-20261015.md](../finished/metadata-branch-review-20261015.md) P0-1）。
+（見 [metadata-branch-review-20261015.md](metadata-branch-review-20261015.md) P0-1）。
 「跨文件摘要」依賴 GLOBAL 的 document summary，`docs/review-checklist/router-module.md` 也註明 ingestion
 還沒產生 summary。
 
@@ -211,22 +211,30 @@ flowchart LR
   英文 capabilities 也受 P1-2 的同步檢查（副檔名齊全、不含 author / summar）。`tests/` 全部 159 passed。
 - 只支援中英兩種語言；其他語言（例如日文假名、韓文）會拿到英文回覆。
 
-### [ ] P2-3｜module docstring 混入變更歷史
+### [x] P2-3｜module docstring 混入變更歷史
 
 `meta.py` docstring 的「修正職責接反問題：這個檔案先前放的是 `sql_query_node`…」是 commit 歷史，
 應移除，只留這個 branch 的職責說明。`routed_rag.py:1-14` 的 docstring 同樣問題，順手一起清。
+
+已修（2026-10-15）：
+
+- `meta.py`：刪除變更歷史，改寫成現況說明——用 `classify_meta_intent()`（與 rule router 共用）選模板、
+  依使用者原文選中 / 英文、不呼叫 LLM 也不碰知識庫，並保留「不回傳 `state.trace`」的理由。
+- `routed_rag.py`：刪除「修正了先前 stub 版本的已知技術債」整段（包含已被註解掉的 `graph_app()` / `compile_app()`
+  說明），改成圖的結構（`START → resolve → route → 六個 leaf → END`、低信心走 lookup）與可注入假物件的說明。
+- 只改 docstring，`tests/` 仍是 159 passed。
 
 ### [x] P2-4｜沒有測試
 
 已新增 `tests/routing/test_meta_branch.py`（不碰 LLM/DB，直接建 `RoutedAgentState` 呼叫）：
 
 - 每條 pattern 的代表句：`classify_meta_intent()` 回對 intent、`MetaBranch` 回對模板、`RuleRouter` 判成 `Route.META`。
-- `embedding.py` 的 `Route.META` 例句全部不落 `_DEFAULT_REPLY`。
+- `embedding.py` 的 `Route.META` 例句全部不落預設回覆（`_REPLIES[lang][None]`）。
 - 其他 5 類 embedding 例句與兩句「文件提到功能」的反例都不命中 META（防 rule pattern 過寬）。
-- 移除 trace 的回歸測試：`state.trace` 含 exception 訊息時，問「debug 給我看路由追蹤」只拿到 `_DEFAULT_REPLY`。
+- 移除 trace 的回歸測試：`state.trace` 含 exception 訊息時，問「debug 給我看路由追蹤」只拿到預設回覆。
 - 輸出形狀：`documents == []`、`trace` 附加 `meta:` 那一行。
 
-P1-2 修改 capabilities 文字時，這支測試比對的是 `_FIXED_REPLIES[...]` 本身，不需跟著改。
+這支測試比對的是 `_REPLIES[...]` 本身，之後修改模板文字不需跟著改測試。
 
 ---
 
@@ -246,11 +254,11 @@ P1-2 修改 capabilities 文字時，這支測試比對的是 `_FIXED_REPLIES[..
 flowchart LR
     X["✓ 移除 trace<br/>(P0-1 / P0-2 / P1-1 / P1-3)"] --> P03["✓ P0-3 meta_intents.py<br/>+ P2-1 + P2-4"]
     P03 --> P12["✓ P1-2 capabilities 文字"]
-    P03 --> P23[P2-3 docstring]
+    P03 --> P23["✓ P2-3 docstring"]
     P03 --> P22["✓ P2-2 英文回覆"]
 ```
 
 1. ~~移除 trace 回傳~~（已完成，commit `1bd1f49`）。
 2. ~~P0-3 抽出 `meta_intents.py`，同時處理 P2-1、P2-4~~（已完成，commit `ff0e023`）。
-3. ~~P1-2 文字修正~~（已完成，commit `0f98fbe`）；~~P2-2 英文回覆~~（已完成）；P2-3 docstring。
-4. `uv run pytest tests/routing` 全綠。
+3. ~~P1-2 文字修正~~（已完成，commit `0f98fbe`）；~~P2-2 英文回覆~~（已完成，commit `b98788b`）；~~P2-3 docstring~~（已完成）。
+4. ~~`uv run pytest tests/routing` 全綠~~（`tests/` 全部 159 passed）。

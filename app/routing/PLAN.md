@@ -100,7 +100,7 @@ AsistAi 目前完全沒有 ingestion worker（`api/v1/endpoints/knowledgeBases.p
    - META/NO_RETRIEVAL：零檢索，答案一次性送達。
    - METADATA：丟一個「這份文件是什麼時候上傳的」，確認查到 `created_dt`，且換一個假造的 `knowledge_base_id` 參數也查不到別的知識庫資料（租戶隔離）。
    - GLOBAL：先上傳一份文件觸發 Celery `summarize_document`，等 worker 跑完後問「這批文件在講什麼」，確認能拿到摘要。
-   - 確認 `trace` 內容能看到完整的 resolve→route→branch 記錄：在 LangSmith 檢查該次 run 最終 state 的 `trace` 欄位（META 分支已不回傳 trace，見 [meta-branch-review-20261015.md](../../docs/plans/in-progress/meta-branch-review-20261015.md)）。
+   - 確認 `trace` 內容能看到完整的 resolve→route→branch 記錄：在 LangSmith 檢查該次 run 最終 state 的 `trace` 欄位（META 分支已不回傳 trace，見 [meta-branch-review-20261015.md](../../docs/plans/finished/meta-branch-review-20261015.md)）。
 3. **回歸**：把 `GRAPH_STRATEGY` 切回 `2`（`SEARCH`），確認舊路徑完全不受影響（新程式碼不應該改到 `SearchingRagGraphFactory`/`agent/nodes/*` 本身，只是把它們掛成子圖節點複用）。
 
 ---
