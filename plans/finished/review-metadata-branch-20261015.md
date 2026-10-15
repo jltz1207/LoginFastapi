@@ -279,7 +279,7 @@ extractor 與 DB 失敗的降級、DB 錯誤不進 trace、缺 KB 仍 fail fast�
 
 驗證：`pytest tests/routing tests/auth` → **37 passed**。
 
-`plans/in-progress/advanced-router-integration-20261015.md` 的 M-INT6 段落原本寫著「`BY_VERSION` 暫時移除」，已更新成目前的實作。
+`plans/in-progress/advanced-router-integration-20261016.md` 的 M-INT6 段落原本寫著「`BY_VERSION` 暫時移除」，已更新成目前的實作。
 
 ## 做得好的地方
 
@@ -294,4 +294,4 @@ extractor 與 DB 失敗的降級、DB 錯誤不進 trace、缺 KB 仍 fail fast�
 2. [x] 修 P0-2 到 P0-4，讓查詢能跑通，並補測試。
 3. [x] 處理 P1（soft delete、參數 schema、日期邊界、錯誤處理）。
 4. [x] P2 收尾。
-5. [x] 更新 `plans/in-progress/advanced-router-integration-20261015.md` 中過時的 METADATA 說明。
+5. [x] 更新 `plans/in-progress/advanced-router-integration-20261016.md` 中過時的 METADATA 說明。

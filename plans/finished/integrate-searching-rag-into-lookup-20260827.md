@@ -2,7 +2,7 @@
 
 ## Context
 
-`plans/in-progress/advanced-router-integration-20261015.md`（M-INT4）早就決定 LOOKUP 分支要重用既有的 `SearchingRagGraphFactory`（retrieve→grade→(rewrite→web_search)→generate 自我修正迴圈），不要用 `routing/branches/lookup.py` 自己另外寫的簡化版 retriever/reranker/generator（打裸 `chromadb.Client()`、寫死 `ChatGoogleGenerativeAI`）。但目前 `app/agent/graphs/routed_rag.py` 實際上還是掛著 `branches/lookup.py` 的 `standard_rag_node`，跟計畫文件矛盾；`app/agent/state.py` 裡為了承接這個整合先放的 `RoutedAgentState` 也是壞的（引用了沒 import 的 `ConversationTurn`，且欄位跟 `routed_rag.py` 自己定義的 `RAGState(TypedDict)` 對不上，目前完全沒被用到）。
+`plans/in-progress/advanced-router-integration-20261016.md`（M-INT4）早就決定 LOOKUP 分支要重用既有的 `SearchingRagGraphFactory`（retrieve→grade→(rewrite→web_search)→generate 自我修正迴圈），不要用 `routing/branches/lookup.py` 自己另外寫的簡化版 retriever/reranker/generator（打裸 `chromadb.Client()`、寫死 `ChatGoogleGenerativeAI`）。但目前 `app/agent/graphs/routed_rag.py` 實際上還是掛著 `branches/lookup.py` 的 `standard_rag_node`，跟計畫文件矛盾；`app/agent/state.py` 裡為了承接這個整合先放的 `RoutedAgentState` 也是壞的（引用了沒 import 的 `ConversationTurn`，且欄位跟 `routed_rag.py` 自己定義的 `RAGState(TypedDict)` 對不上，目前完全沒被用到）。
 
 這次要做的：讓 `RoutedGraphFactory` 的 `lookup` 節點變成一個**真正的 LangGraph 子圖**（`add_node("lookup", compiled_searching_rag_graph)`），保留 `SearchingRagGraphFactory`/`searching_rag.py` 底下六個 node 完全不動、可以直接被外層 graph 呼叫、token 串流跟 checkpoint 語意都自然沿用。這要求外層 state 的欄位名/型別跟 `AgentState` 對得上（LangGraph 子圖是靠 channel 名稱合併父子 state，不是靠額外的轉換函式），所以 `RoutedAgentState` 要改成真的 `class RoutedAgentState(AgentState)`，而不是現在這個獨立、壞掉的 pydantic class。
 

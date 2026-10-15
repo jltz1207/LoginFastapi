@@ -66,7 +66,7 @@ route=LOOKUP conf=0.82
 
 router 出錯降級時，還會多出 `route: router failed (<ExceptionType>: <message>), degrading to fallback_chain` 這類行。
 
-**原本的設想**（依 `taxonomy.py` 舊 docstring 與 `plans/in-progress/advanced-router-integration-20261015.md` 推論）：開發者發現某題答錯時，
+**原本的設想**（依 `taxonomy.py` 舊 docstring 與 `plans/in-progress/advanced-router-integration-20261016.md` 推論）：開發者發現某題答錯時，
 接著在聊天中問「debug」，META 就回傳路由紀錄，不用翻 log 就能看出是不是 router 分錯類。
 
 **2026-10-15 移除**，原因：
