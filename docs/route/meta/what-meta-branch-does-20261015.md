@@ -1,7 +1,8 @@
 # META 分支是做什麼的
 
-> 查證日期：2026-10-15。內容依閱讀 `app/routing/branches/meta.py`、`app/routing/taxonomy.py`、
-> `app/routing/router/rule.py` 整理，**未實際執行**。
+> 查證日期：2026-10-15。內容依閱讀 `app/routing/branches/meta.py`、`app/routing/meta_intents.py`、
+> `app/routing/taxonomy.py`、`app/routing/router/rule.py` 整理。第 3、6 節的 pattern 行為已用
+> `tests/routing/test_meta_branch.py` 實測（Python 3.12.13、pytest 9.1.1）；其餘為閱讀程式碼的結論。
 
 META 是 routing 六類 route 之一，專門回答**關於這個系統本身**的問題（「你能做什麼」、「你是誰」），
 不是知識庫內容，也不是一般常識。
@@ -30,15 +31,16 @@ flowchart LR
 
 ## 3. `meta.py` 的運作方式
 
-對 `resolved_query` 做關鍵字 substring 比對，依序選一個回覆：
+用 `app/routing/meta_intents.py` 的 `classify_meta_intent()` 對 `resolved_query` 做 regex 比對，依序選一個回覆。
+rule router（`router/rule.py`）判斷「是不是 META」也是呼叫同一個函式，所以 rule 送進來的問題一定對得到模板：
 
 ```mermaid
 flowchart TD
-    Q[resolved_query] --> I{"含 你是誰 / who are you？"}
+    Q[resolved_query] --> I{"IDENTITY pattern？<br/>你是誰 / 你是什麼 / 你用什麼模型 /<br/>who are you / what model are you"}
     I -->|是| ID[identity 模板]
-    I -->|否| C{"含 你能做什麼 / 什麼功能 /<br/>what can you …？"}
+    I -->|否| C{"CAPABILITIES pattern？<br/>你能/可以…做/提供/回答/協助 /<br/>系統…有/能/支援…功能 / 我可以問你什麼 /<br/>what can you do/help"}
     C -->|是| CAP[capabilities 模板]
-    C -->|否| D["default 模板<br/>「這是一個系統性問題…」"]
+    C -->|否| D["default 模板<br/>（embedding / LLM 判成 META，<br/>但 pattern 沒命中時）"]
 ```
 
 最後在 `trace` 附加一行 `meta: fixed-template reply, no generation`，標記這輪走了 META。
@@ -85,8 +87,15 @@ flowchart TD
 - META 只回 identity / capabilities / default 三種模板。
 - `state.trace` 欄位保留，各節點照常寫入，給 LangSmith / log 使用。
 
-## 6. 已知問題
+## 6. 為什麼 router 和 branch 共用 pattern
 
-router 判斷「這是 META」用一組規則（`rule.py` 的 regex、`embedding.py` 的例句），`meta.py` 判斷
-「回哪個模板」用另一組 substring。兩組對不上，很多正確分到 META 的問題最後拿到 `default` 回覆。
-完整發現與修法見 [meta-branch-review-20261015.md](../../plans/in-progress/meta-branch-review-20261015.md)。
+修正前，rule router 判斷「這是 META」用一組 regex，`meta.py` 判斷「回哪個模板」用另一組 substring。
+兩組對不上，「你可以幫我做什麼」、「這個系統有哪些功能」這類問題被正確分到 META，卻拿到 `default` 回覆。
+現在兩邊都呼叫 `classify_meta_intent()`，`tests/routing/test_meta_branch.py` 也檢查 embedding 的 META 例句
+不會落到 `default`。
+
+修改 `meta_intents.py` 的 pattern 時要注意：rule 命中會以 0.95 信心直接短路 cascade，pattern 太寬會把
+「這份文件提到什麼功能」這種知識庫問題誤送到 META。所以 pattern 一律錨定在「你」/「系統」，並且要遞增
+`rule.py` 的 `ROUTER_VERSION`。
+
+其餘待修項目見 [meta-branch-review-20261015.md](../../plans/in-progress/meta-branch-review-20261015.md)。

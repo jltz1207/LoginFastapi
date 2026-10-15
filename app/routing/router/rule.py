@@ -12,21 +12,15 @@ from __future__ import annotations
 
 import re
 
+from app.routing.meta_intents import classify_meta_intent
 from app.routing.router.base import BaseRouter
 from app.routing.taxonomy import DEFAULT_ROUTE, Route, RouteDecision, RouterContext
 
-ROUTER_VERSION = "rule-v1"
+ROUTER_VERSION = "rule-v2"
 
 _RULE_CONFIDENCE = 0.95
 
-_META_PATTERNS = [
-    re.compile(r"你(能|可以).{0,6}(做|提供|回答|協助)"),
-    re.compile(r"你是(誰|什麼)"),
-    re.compile(r"(這個)?系統.{0,6}(有|能).{0,6}功能"),
-    re.compile(r"我可以問你什麼"),
-    re.compile(r"what can you (do|help)", re.IGNORECASE),
-    re.compile(r"who are you", re.IGNORECASE),
-]
+# META patterns live in `routing/meta_intents.py`, shared with the META branch.
 
 _METADATA_PATTERNS = [
     re.compile(r"作者是?誰"),
@@ -44,7 +38,7 @@ class RuleRouter(BaseRouter):
     router_version = ROUTER_VERSION
 
     async def route(self, query: str, ctx: RouterContext) -> RouteDecision:
-        if any(p.search(query) for p in _META_PATTERNS):
+        if classify_meta_intent(query) is not None:
             return RouteDecision(
                 route=Route.META,
                 confidence=_RULE_CONFIDENCE,

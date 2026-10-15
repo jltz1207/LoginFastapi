@@ -11,41 +11,30 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from app.routing.meta_intents import MetaIntent, classify_meta_intent
+
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
 
-ROUTER_VERSION = "meta-v1"
+ROUTER_VERSION = "meta-v2"
 
 _FIXED_REPLIES = {
-    "capabilities": (
+    MetaIntent.CAPABILITIES: (
         "我是一個 RAG 查詢助理，可以幫你在知識庫裡查資料、做跨文件摘要、"
         "查詢文件的作者/日期等屬性、比較多份文件，或直接回答常識性問題。"
     ),
-    "identity": "我是這個系統的查詢助理，負責把你的問題分派到最適合的處理路徑並回答。",
-    "default": "這是一個系統性問題。我目前只能針對知識庫內容或常識性問題作答，更多系統說明請參考文件。",
+    MetaIntent.IDENTITY: "我是這個系統的查詢助理，負責把你的問題分派到最適合的處理路徑並回答。",
 }
-
-_IDENTITY_KEYWORDS = ["你是誰", "who are you"]
-_CAPABILITY_KEYWORDS = ["你能做什麼", "你可以做什麼", "什麼功能", "what can you"]
-
-
-def _matches(query: str, query_lower: str, keywords: list[str]) -> bool:
-    return any(kw in query or kw in query_lower for kw in keywords)
+# embedding / LLM router 判成 META、但 `meta_intents` 的 pattern 沒命中時的回覆。
+_DEFAULT_REPLY = "這是一個系統性問題。我目前只能針對知識庫內容或常識性問題作答，更多系統說明請參考文件。"
 
 
 class MetaBranch:
     router_version = ROUTER_VERSION
 
     async def __call__(self, state: RoutedAgentState) -> dict:
-        query = state.resolved_query
-        query_lower = query.lower()
-
-        if _matches(query, query_lower, _IDENTITY_KEYWORDS):
-            answer = _FIXED_REPLIES["identity"]
-        elif _matches(query, query_lower, _CAPABILITY_KEYWORDS):
-            answer = _FIXED_REPLIES["capabilities"]
-        else:
-            answer = _FIXED_REPLIES["default"]
+        intent = classify_meta_intent(state.resolved_query)
+        answer = _FIXED_REPLIES[intent] if intent is not None else _DEFAULT_REPLY
 
         return {
             "answer": answer,

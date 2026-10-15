@@ -1,8 +1,8 @@
 # Code review：`app/routing/branches/meta.py`
 
-> **狀態：已移除 trace 回傳（P0-1、P0-2、P1-1、P1-3 因此結案）；P0-3、P1-2、P2 尚未修正。**
+> **狀態：已移除 trace 回傳（commit `1bd1f49`，P0-1、P0-2、P1-1、P1-3 因此結案）；P0-3、P2-1 已修，P2-4 已補 META 測試；P1-2、P2-2、P2-3 尚未修正。**
 > Review 日期：2026-10-15。
-> 以下結論來自閱讀程式碼，**未實際執行**；「誤判範例」是依 regex / substring 規則手動推導，修正時要用測試確認。
+> P0-3 的結論已用 `tests/routing/test_meta_branch.py` 實測（Python 3.12.13、pytest 9.1.1，`tests/` 全部 148 passed）；其餘結論來自閱讀程式碼，未實際執行。
 
 ## Context
 
@@ -66,10 +66,10 @@ trace.append(f"route: router failed ({type(exc).__name__}: {exc}), degrading to 
 三層 router 都沒有對應 trace 類問題：`rule.py` 的 `_META_PATTERNS`、`embedding.py` 的 `Route.META` 例句、
 `llm.py` 的 META 說明都只涵蓋「你能做什麼、你是誰」。`app/routing/PLAN.md:103` 的驗收步驟因此無法通過，已改寫。
 
-### [ ] P0-3｜router 與 branch 的關鍵字各寫一份，不同步
+### [x] P0-3｜router 與 branch 的關鍵字各寫一份，不同步
 
 router 用 regex（`rule.py`）與例句（`embedding.py`），branch 用另一組 substring（`meta.py` 的 `_IDENTITY_KEYWORDS`、`_CAPABILITY_KEYWORDS`）。
-被 router 判成 META 卻在 branch 落到 `default` 的例子（依規則手動推導，未實測）：
+被 router 判成 META 卻在 branch 落到 `default` 的例子（修正前依規則手動推導；修正後這些句子都已列入測試並通過）：
 
 | query | router 命中 | branch 結果 | 應該是 |
 |---|---|---|---|
@@ -101,6 +101,29 @@ router 用 regex（`rule.py`）與例句（`embedding.py`），branch 用另一�
 4. 英文 pattern 加 word boundary 並用 `re.IGNORECASE`。
 5. 測試：把 `rule.py` 每條 META pattern 的代表句、`embedding.py` 的 `Route.META` 例句全部丟進
    `MetaBranch`，斷言**沒有一句**落到 `default`。這條測試是防止之後再次不同步的主要手段。
+
+#### P0-3 實作結果（2026-10-15）
+
+```mermaid
+flowchart LR
+    MI["app/routing/meta_intents.py<br/>META_INTENT_PATTERNS<br/>classify_meta_intent()"]
+    MI -->|"is not None → Route.META"| RR["router/rule.py<br/>rule-v2"]
+    MI -->|"MetaIntent → 模板"| MB["branches/meta.py<br/>meta-v2"]
+```
+
+- 新增 `app/routing/meta_intents.py`：`MetaIntent`（`IDENTITY`、`CAPABILITIES`）、`META_INTENT_PATTERNS`、
+  `classify_meta_intent()`。dict 順序即優先序，IDENTITY 先。
+- `rule.py`：刪除 `_META_PATTERNS`，改用 `classify_meta_intent(query) is not None`；`ROUTER_VERSION` → `rule-v2`。
+- `meta.py`：刪除 `_IDENTITY_KEYWORDS`、`_CAPABILITY_KEYWORDS`、`_matches()`；`_FIXED_REPLIES` 改用 `MetaIntent` 當 key，
+  `default` 抽成 `_DEFAULT_REPLY`（給 embedding / LLM 判成 META 但 pattern 沒命中的情況）；`ROUTER_VERSION` → `meta-v2`。
+- 為了涵蓋 embedding 例句，pattern 比 `rule-v1` **擴大**了：
+  - IDENTITY 新增 `你是?用(什麼|哪一?個|哪種)模型`、`\bwhat model are you\b`。
+  - CAPABILITIES 的「系統…功能」新增 `支援`。
+  - 英文 pattern 加上 `\b` word boundary。
+  因為 rule 命中會以 0.95 短路 cascade，測試另外斷言**其他 5 類的所有 embedding 例句**、以及
+  「這份文件提到什麼功能？」、「第三章描述了系統的哪些功能需求？」都**不會**命中 META。
+- 已知限制（沿用 `rule-v1` 的行為，未修）：`Who are you guys planning to hire?` 仍會命中 IDENTITY，
+  因為 `who are you` 沒有錨定句尾。實際查詢中出現機率低，暫不收緊。
 
 ---
 
@@ -134,10 +157,10 @@ router 用 regex（`rule.py`）與例句（`embedding.py`），branch 用另一�
 
 ---
 
-### [ ] P2-1｜`_matches()` 的雙重比對多餘
+### [x] P2-1｜`_matches()` 的雙重比對多餘
 
 `_matches()` 同時比 `query` 和 `query_lower`，但所有關鍵字本來就是小寫或中文，比 `query_lower` 就夠了。
-P0-3 改用 `re.IGNORECASE` 後直接刪除。
+已隨 P0-3 刪除，英文 pattern 改用 `re.IGNORECASE`。
 
 ### [ ] P2-2｜回覆語言固定為中文
 
@@ -151,15 +174,17 @@ P0-3 改用 `re.IGNORECASE` 後直接刪除。
 `meta.py` docstring 的「修正職責接反問題：這個檔案先前放的是 `sql_query_node`…」是 commit 歷史，
 應移除，只留這個 branch 的職責說明。`routed_rag.py:1-14` 的 docstring 同樣問題，順手一起清。
 
-### [ ] P2-4｜沒有測試
+### [x] P2-4｜沒有測試
 
-`tests/routing/` 只有 `test_metadata_branch.py`、`test_multi_hop_isolation.py`。新增 `tests/routing/test_meta_branch.py`：
+已新增 `tests/routing/test_meta_branch.py`（不碰 LLM/DB，直接建 `RoutedAgentState` 呼叫）：
 
-- P0-3 的同步測試（rule pattern 代表句 + embedding 例句全部不落 default）。
-- 移除 trace 的回歸測試：`state.trace` 有內容時，問「debug」/「給我看路由追蹤」的 `answer` 不包含任何 trace 項目。
-- 回傳的 `documents == []`、`trace` 有附加 `meta:` 那一行。
+- 每條 pattern 的代表句：`classify_meta_intent()` 回對 intent、`MetaBranch` 回對模板、`RuleRouter` 判成 `Route.META`。
+- `embedding.py` 的 `Route.META` 例句全部不落 `_DEFAULT_REPLY`。
+- 其他 5 類 embedding 例句與兩句「文件提到功能」的反例都不命中 META（防 rule pattern 過寬）。
+- 移除 trace 的回歸測試：`state.trace` 含 exception 訊息時，問「debug 給我看路由追蹤」只拿到 `_DEFAULT_REPLY`。
+- 輸出形狀：`documents == []`、`trace` 附加 `meta:` 那一行。
 
-`MetaBranch` 不碰 LLM/DB，可以直接建 `RoutedAgentState` 呼叫，不需假物件。
+P1-2 修改 capabilities 文字時，這支測試比對的是 `_FIXED_REPLIES[...]` 本身，不需跟著改。
 
 ---
 
@@ -177,13 +202,13 @@ P0-3 改用 `re.IGNORECASE` 後直接刪除。
 
 ```mermaid
 flowchart LR
-    X["✓ 移除 trace<br/>(P0-1 / P0-2 / P1-1 / P1-3)"] --> P03[P0-3 meta_intents.py<br/>+ P2-1]
-    P03 --> T[P2-4 測試]
-    P12[P1-2 capabilities 文字] --> T
-    P23[P2-3 docstring] --> T
+    X["✓ 移除 trace<br/>(P0-1 / P0-2 / P1-1 / P1-3)"] --> P03["✓ P0-3 meta_intents.py<br/>+ P2-1 + P2-4"]
+    P03 --> P12[P1-2 capabilities 文字]
+    P03 --> P23[P2-3 docstring]
+    P03 --> P22["P2-2 英文回覆（待決定）"]
 ```
 
-1. ~~移除 trace 回傳~~（已完成）。
-2. P0-3 抽出 `meta_intents.py`，同時處理 P2-1。
+1. ~~移除 trace 回傳~~（已完成，commit `1bd1f49`）。
+2. ~~P0-3 抽出 `meta_intents.py`，同時處理 P2-1、P2-4~~（已完成）。
 3. P1-2 文字修正、P2-3 docstring；P2-2 視決定而定。
-4. P2-4 補測試，`uv run pytest tests/routing` 全綠。
+4. `uv run pytest tests/routing` 全綠。
