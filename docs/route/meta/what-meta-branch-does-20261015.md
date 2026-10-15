@@ -66,7 +66,7 @@ route=LOOKUP conf=0.82
 
 router 出錯降級時，還會多出 `route: router failed (<ExceptionType>: <message>), degrading to fallback_chain` 這類行。
 
-**原本的設想**（依 `taxonomy.py` 舊 docstring 與 `app/routing/PLAN.md` 推論）：開發者發現某題答錯時，
+**原本的設想**（依 `taxonomy.py` 舊 docstring 與 `plans/in-progress/advanced-router-integration-20261015.md` 推論）：開發者發現某題答錯時，
 接著在聊天中問「debug」，META 就回傳路由紀錄，不用翻 log 就能看出是不是 router 分錯類。
 
 **2026-10-15 移除**，原因：
@@ -99,4 +99,4 @@ flowchart TD
 「這份文件提到什麼功能」這種知識庫問題誤送到 META。所以 pattern 一律錨定在「你」/「系統」，並且要遞增
 `rule.py` 的 `ROUTER_VERSION`。
 
-完整 review 紀錄見 [meta-branch-review-20261015.md](../../../plans/finished/meta-branch-review-20261015.md)。
+完整 review 紀錄見 [review-meta-branch-20261015.md](../../../plans/finished/review-meta-branch-20261015.md)。

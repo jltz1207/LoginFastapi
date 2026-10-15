@@ -31,7 +31,7 @@
 - **A**：所有經過 `StoreIndexer` 的寫入**自動**讓 BM25 cache 失效，寫入端不必記得手動呼叫。
 - **B**：其餘漏網情況（外部 process、多 worker）靠 TTL **最終**恢復。
 
-跨 process 立即一致（每次查詢比對 KB 版本）不在這次範圍，等 [`vectorstore-structure-fixes`](../partly-finished-delayed/vectorstore-structure-fixes-20261009.md) 的 Phase 6（多 worker）時再做。
+跨 process 立即一致（每次查詢比對 KB 版本）不在這次範圍，等 [`vectorstore-structure-fixes`](../deferred/vectorstore-structure-fixes-20261009.md) 的 Phase 6（多 worker）時再做。
 
 ## 目標流程
 

@@ -96,7 +96,7 @@ tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False,
 summary:   Mapped[Optional[str]] = mapped_column(Text, nullable=True)   # null = 還沒算好
 ```
 
-`tenant_id` 是 `0a3180c` 的遺留缺口 —— 當時只加了 `users.tenant_id`，走 SQL 撈摘要需要它才能對齊三層邊界（見 `docs/vectorstore-collection-partitioning-20261009.md`）。
+`tenant_id` 是 `0a3180c` 的遺留缺口 —— 當時只加了 `users.tenant_id`，走 SQL 撈摘要需要它才能對齊三層邊界（見 `docs/vectorstore/vectorstore-collection-partitioning-20261009.md`）。
 
 `global_summary.py:28` 的 `SummaryIndexClient` Protocol **保留** —— 它存在的目的就是讓儲存後端可抽換，換成 Postgres 實作正是它發揮作用的時候。`app/routing/branches/metadata.py:21` 已有 routing 層直接用 `AsyncSessionLocal` 的先例。
 

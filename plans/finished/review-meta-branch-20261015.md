@@ -41,7 +41,7 @@ flowchart LR
 
 - `meta.py`：刪除 `_TRACE_KEYWORDS`、`_format_trace()` 與 trace 分支；module docstring 註明不回傳 trace 的理由。
 - `taxonomy.py`：`Route.META` docstring 移除「或回傳 trace」。
-- `app/routing/PLAN.md:103`：驗收步驟改成在 LangSmith 檢查 `trace` 欄位。
+- `plans/in-progress/advanced-router-integration-20261015.md:103`：驗收步驟改成在 LangSmith 檢查 `trace` 欄位。
 - `RoutedAgentState.trace` 欄位**保留**：各節點仍會寫入，作為 LangSmith / log 的診斷資料。
 
 ---
@@ -64,7 +64,7 @@ trace.append(f"route: router failed ({type(exc).__name__}: {exc}), degrading to 
 ### [x] P0-2｜trace 路徑實際上到不了（已因移除 trace 結案）
 
 三層 router 都沒有對應 trace 類問題：`rule.py` 的 `_META_PATTERNS`、`embedding.py` 的 `Route.META` 例句、
-`llm.py` 的 META 說明都只涵蓋「你能做什麼、你是誰」。`app/routing/PLAN.md:103` 的驗收步驟因此無法通過，已改寫。
+`llm.py` 的 META 說明都只涵蓋「你能做什麼、你是誰」。`plans/in-progress/advanced-router-integration-20261015.md:103` 的驗收步驟因此無法通過，已改寫。
 
 ### [x] P0-3｜router 與 branch 的關鍵字各寫一份，不同步
 
@@ -140,7 +140,7 @@ flowchart LR
 
 `meta.py` 的 `_FIXED_REPLIES["capabilities"]` 宣稱能「查詢文件的**作者**/日期等屬性」，但 METADATA 分支目前只支援
 `BY_DATE_RANGE` / `BY_DOCUMENT_TYPE` / `BY_VERSION`（`metadata.py:46-48`），`documents` 表沒有 author 欄位
-（見 [metadata-branch-review-20261015.md](metadata-branch-review-20261015.md) P0-1）。
+（見 [review-metadata-branch-20261015.md](review-metadata-branch-20261015.md) P0-1）。
 「跨文件摘要」依賴 GLOBAL 的 document summary，`docs/review-checklist/router-module.md` 也註明 ingestion
 還沒產生 summary。
 
@@ -243,7 +243,7 @@ flowchart LR
 以下是 routed graph 與 API 層的整合問題，不只影響 META，另開 plan 處理：
 
 - `chats.py:28-29`：`STATUS_NODES` / `ANSWER_NODES` 沒有 `meta`（也沒有其他 routed 分支），
-  META 的 `answer` 不會送到 client，存進 DB 的 `full_answer` 是空字串。`app/routing/PLAN.md:85-88` 已列出這項待辦。
+  META 的 `answer` 不會送到 client，存進 DB 的 `full_answer` 是空字串。`plans/in-progress/advanced-router-integration-20261015.md:85-88` 已列出這項待辦。
 - `chats.py:42`：建立的是 `LookupAgentState`，不是 `RoutedAgentState`；`trace` / `route` 欄位不存在。
 - 所有 routed 分支都沒有把回答 append 進 `chat_history`（沒有回傳 `AIMessage`），下一輪 resolver 看不到 META 的回答。
 - `model_used` 沒寫入；`PLAN.md:88` 建議 fallback 為 `f"router:{route}"`。

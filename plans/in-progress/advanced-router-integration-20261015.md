@@ -54,7 +54,7 @@ AsistAi 目前完全沒有 ingestion worker（`api/v1/endpoints/knowledgeBases.p
 
 `routing/branches/metadata.py` 的 `_WHITELISTED_QUERIES` 假設 `document`/`document_chunk` 表有 `author`、`document_type`、`version` 欄位；但 AsistAi 實際的 `Document` model（`app/models/document.py`）只有 `filename`/`file_extension`/`mime_type`/`created_dt`/`indexed_at`/`chunk_count` 等欄位，**沒有 `author` 欄位，也沒有獨立的 `document_chunk` 表**（chunk 內容只存在 Chroma，不落地 Postgres）。處理方式：
 
-> 2026-10-15 更新：已依下列內容實作，細節與測試結果見 [metadata-branch-review-20261015.md](../../plans/finished/metadata-branch-review-20261015.md)。
+> 2026-10-15 更新：已依下列內容實作，細節與測試結果見 [review-metadata-branch-20261015.md](../finished/review-metadata-branch-20261015.md)。
 
 - 白名單只查 `documents` 現有欄位，共三種：
   - `BY_DATE_RANGE`：`created_dt`，半開區間（結束日期當天整天都算）。
@@ -100,7 +100,7 @@ AsistAi 目前完全沒有 ingestion worker（`api/v1/endpoints/knowledgeBases.p
    - META/NO_RETRIEVAL：零檢索，答案一次性送達。
    - METADATA：丟一個「這份文件是什麼時候上傳的」，確認查到 `created_dt`，且換一個假造的 `knowledge_base_id` 參數也查不到別的知識庫資料（租戶隔離）。
    - GLOBAL：先上傳一份文件觸發 Celery `summarize_document`，等 worker 跑完後問「這批文件在講什麼」，確認能拿到摘要。
-   - 確認 `trace` 內容能看到完整的 resolve→route→branch 記錄：在 LangSmith 檢查該次 run 最終 state 的 `trace` 欄位（META 分支已不回傳 trace，見 [meta-branch-review-20261015.md](../../plans/finished/meta-branch-review-20261015.md)）。
+   - 確認 `trace` 內容能看到完整的 resolve→route→branch 記錄：在 LangSmith 檢查該次 run 最終 state 的 `trace` 欄位（META 分支已不回傳 trace，見 [review-meta-branch-20261015.md](../finished/review-meta-branch-20261015.md)）。
 3. **回歸**：把 `GRAPH_STRATEGY` 切回 `2`（`SEARCH`），確認舊路徑完全不受影響（新程式碼不應該改到 `SearchingRagGraphFactory`/`agent/nodes/*` 本身，只是把它們掛成子圖節點複用）。
 
 ---
