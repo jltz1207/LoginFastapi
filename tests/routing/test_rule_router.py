@@ -35,6 +35,22 @@ _METADATA_QUERIES = [
     "列出 2026-01-01 之後上傳的文件",
     "哪些文件是 2025/12 建立的",
     "上傳時間在 2026/3 的檔案",
+    # English (P2-2)
+    "who wrote this document",
+    "Who uploaded the report?",
+    "Who is the author of this file?",
+    "What is this document's author?",
+    "when was this uploaded",
+    "When was this report created?",
+    "What is the upload date?",
+    "Show the version history of this document",
+    "How many versions does this file have?",
+    "What is the version number of report.pdf?",
+    "What file types are in the knowledge base?",
+    "Which document formats do we have?",
+    "List all documents uploaded after 2026-01-01.",
+    "Which files were added in March?",
+    "reports created before 2025/12",
 ]
 
 _NOT_METADATA_QUERIES = [
@@ -50,6 +66,15 @@ _NOT_METADATA_QUERIES = [
     "這份文件提到什麼功能",
     "總結所有文件",
     "這份合約的付款條件是什麼？",
+    # English general-knowledge / content questions (P2-2)
+    "Who wrote the Declaration of Independence?",
+    "When was the company founded?",
+    "When was GDPR published?",
+    "What is the new version of the refund policy?",
+    "What was the revenue in January 2026?",
+    "What does the SLA document say about uptime guarantees?",
+    "Summarize the key themes across all uploaded reports.",
+    "Compare the security policies across all three vendor contracts.",
 ]
 
 

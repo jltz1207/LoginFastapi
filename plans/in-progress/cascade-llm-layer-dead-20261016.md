@@ -8,7 +8,7 @@
 | Base commit | — |
 | Sessions | `7016af64-bcf9-4458-9c65-39c74352bb1f`<br>`08386c13-baba-4cb7-b734-6b220ebc785e` |
 
-> **狀態：P0-1、P1-1 ～ P1-4、P2-3 已完成（2026-10-16，P0-1 採方案 A）；其餘未開始。**
+> **狀態：P0-1、P1-1 ～ P1-4、P2-2、P2-3 已完成（2026-10-16，P0-1 採方案 A）；其餘未開始。**
 > review META 分支時順帶發現，見 [review-meta-branch-20261015.md](../finished/review-meta-branch-20261015.md)。
 > 查證日期：2026-10-15。§2 的結論已用假 embedding 模擬實測（Python 3.12.13，程式碼在 §2.2）；
 > 真實 Gemini embedding 下的分佈、延遲數字**未實測**。
@@ -329,7 +329,18 @@ LLM 層的例外並回傳 embedding 層的結果（低於門檻就 LOOKUP），�
   - 例句設計：LOOKUP「這份合約的付款條件是什麼？」與 MULTI_HOP「這兩份合約的付款條件哪裡不一樣？」字面幾乎相同，是否造成誤判；
     META / METADATA 例句多數已被 rule 層攔下，是否該換成換句話說的版本。
 
-### [ ] P2-2｜Rule：英文 METADATA 覆蓋不足、confidence 寫死
+### [x] P2-2｜Rule：英文 METADATA 覆蓋不足、confidence 寫死
+
+> **已完成（2026-10-16）**：
+> - 英文 pattern：比照 P1-3，一律錨定在指向文件的字（`document`、`file`、`report`、`pdf`、`doc` 與複數），涵蓋
+>   作者 / 上傳者、上傳日期、版本、檔案類型、日期區間五類。原本的 `file type` 改成 `(file|document) (type|format)s?`。
+>   `ROUTER_VERSION` → `rule-v5`。
+> - confidence：**決定不改**。P0-1 之後 rule 層是否採用看 `accepted`（命中即 True），confidence 只供觀測，
+>   分強弱不會改變行為；不夠可靠的 pattern 改由收窄 pattern 本身處理。理由已寫進 `_RULE_CONFIDENCE` 的註解。
+> - 測試：`test_rule_router.py` 新增英文 15 個應命中、8 個不應命中（含 `Who wrote the Declaration of Independence?`、
+>   `When was GDPR published?`、embedding 的 LOOKUP / GLOBAL / MULTI_HOP 英文例句）。應命中的 14 個在修改前的程式碼上失敗；
+>   全部測試 287 passed。
+> - 已知限制（已實測）：`What file types can I upload?` 會命中 METADATA，但它問的是系統能力（較接近 META）。
 
 細節：[rule-router](../../docs/route/cascade/rule-router-20261016.md) §5。
 
