@@ -2,7 +2,7 @@
 fallback chain）、M4（六個 leaf branch）接成一張完整的圖。
 
     START → resolve → route ─┬→ lookup / global / metadata / multi_hop / no_retrieval / meta → END
-                             └ confidence < CONFIDENCE_THRESHOLD 一律走 lookup（select_branch）
+                             └ router 沒有 accepted 的決策一律改走 lookup（RouterNode）
 
 `RoutedGraphFactory.build()` 的每個節點都可注入假物件，測試不需要真的打 Gemini/Chroma/PostgreSQL。
 """
@@ -30,7 +30,7 @@ from app.routing.resolver import QueryResolver
 from app.routing.router.base import BaseRouter
 from app.routing.router.cascade import CascadeRouter
 from app.routing.router.fallback_chain import FallbackChainRouter
-from app.routing.taxonomy import CONFIDENCE_THRESHOLD, DEFAULT_ROUTE, Route, RouterContext
+from app.routing.taxonomy import DEFAULT_ROUTE, Route, RouterContext
 
 _DIALOGUE_TYPES = ("human", "ai")
 
@@ -116,9 +116,16 @@ class RouterNode:
                 f"fallback_chain: {entry}" for entry in getattr(self._fallback, "last_degradations", [])
             )
 
-        trace.append(f"route={decision.route.value} conf={decision.confidence:.2f}")
+        route = decision.route
+        if not decision.accepted:
+            # 是否採用由 router 判斷（`RouteDecision.accepted`），這裡不再拿 confidence 比門檻；
+            # 只有直接注入單一層 router（例如 `EmbeddingRouter`）時才會走到這裡。
+            trace.append(f"route: {route.value} not accepted, falling back to {DEFAULT_ROUTE.value}")
+            route = DEFAULT_ROUTE
+
+        trace.append(f"route={route.value} conf={decision.confidence:.2f}")
         return {
-            "route": decision.route.value,
+            "route": route.value,
             "confidence": decision.confidence,
             "filters": decision.filters,
             "trace": trace,
@@ -136,10 +143,11 @@ _ROUTE_TO_NODE: dict[str, str] = {
 
 
 def select_branch(state: RoutedAgentState) -> str:
-    """confidence < 門檻一律保底走 LOOKUP，不管 router 實際輸出什麼 route。"""
-    if state.confidence < CONFIDENCE_THRESHOLD:
-        return _ROUTE_TO_NODE[DEFAULT_ROUTE.value]
-    return _ROUTE_TO_NODE[state.route]
+    """依 `RouterNode` 寫入的 route 分派；尚未 routing（`route=""`）時保底走 LOOKUP。
+
+    不再比 confidence：是否採用已由 router 判斷，這裡再比門檻會把 LLM 層的決定否決掉。
+    """
+    return _ROUTE_TO_NODE.get(state.route, _ROUTE_TO_NODE[DEFAULT_ROUTE.value])
 
 class RoutedGraphFactory(BaseGraphFactory):
     @staticmethod

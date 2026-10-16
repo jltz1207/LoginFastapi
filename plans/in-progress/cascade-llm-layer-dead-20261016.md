@@ -8,7 +8,7 @@
 | Base commit | — |
 | Sessions | `7016af64-bcf9-4458-9c65-39c74352bb1f`<br>`08386c13-baba-4cb7-b734-6b220ebc785e` |
 
-> **狀態：尚未開始修正。**
+> **狀態：P0-1、P2-3 已完成（2026-10-16，採方案 A）；其餘未開始。**
 > review META 分支時順帶發現，見 [review-meta-branch-20261015.md](../finished/review-meta-branch-20261015.md)。
 > 查證日期：2026-10-15。§2 的結論已用假 embedding 模擬實測（Python 3.12.13，程式碼在 §2.2）；
 > 真實 Gemini embedding 下的分佈、延遲數字**未實測**。
@@ -168,7 +168,22 @@ asyncio.run(main())
 
 ## 4. 修正計畫
 
-### [ ] P0-1｜讓 LLM 層的決定真的能被採用
+### [x] P0-1｜讓 LLM 層的決定真的能被採用
+
+> **已完成（2026-10-16）：採方案 A。**
+> - 決定理由：`google-genai` 2.8.0 SDK 有 `response_logprobs`，但專案使用的 `langchain_google_genai` 4.2.5
+>   完全沒有處理 logprobs（套件內找不到 `logprob`）。方案 B 要繞過 LangChain 直接呼叫 SDK，並從 JSON 輸出拆出
+>   route token 的 logprob；Gemini 2.5 flash 是否支援 logprobs 也未查證。依本節原定規則採 A。
+> - 實作：`RouteDecision.accepted`（`taxonomy.py`）。rule 命中、embedding `confidence >= threshold`、LLM 成功回傳、
+>   `NoOpRouter` 為 True；cascade 改看 `accepted` 短路，並移除不再使用的 `threshold` 參數；fallback chain 第一個回應的層
+>   沒有 accepted 時改回 LOOKUP；`RouterNode` 對沒有 accepted 的決策寫入 LOOKUP；`select_branch()` 只看 route
+>   （`route=""` 保底 LOOKUP）。`SpeculativeExecutor`（尚未接進 graph）一併改看 `accepted`，否則接上後會重現同一個 bug。
+> - 版本：`rule-v3`、`embedding-v2`、`llm-v2`、`cascade-v2`、`fallback-chain-v2`、`speculative-v2`、`noop-v2`。
+>   除了原定的三個，其他 router 的輸出也多了 `accepted`，一併遞增，避免 semantic cache 讀到沒有這個欄位的舊決策。
+> - 測試：`tests/routing/test_cascade_llm_layer.py`，28 個測試全過；在修改前的程式碼上有 21 個失敗。
+>   全部測試 223 passed（Python 3.12.13）。
+> - §2.2 重現程式在修正後的輸出：`queries reaching LLM layer: 1015; non-LOOKUP LLM decisions that survived cascade: 5075`
+>   （修正前是 0）。
 
 根本原因是「用比較弱的 embedding 層去否決比較強的 LLM 層」。兩個方向：
 
@@ -274,7 +289,9 @@ LLM 層的例外並回傳 embedding 層的結果（低於門檻就 LOOKUP），�
   補英文 pattern（同樣要錨定），並加進 P1-3 的測試。
 - 所有命中一律 0.95：「作者是誰」這種強訊號與「剛好有個日期」這種弱訊號分數相同。P1-3 錨定後若仍有弱 pattern，考慮給較低分數讓 cascade 往下走。
 
-### [ ] P2-3｜Embedding：`self._threshold` 是 dead code
+### [x] P2-3｜Embedding：`self._threshold` 是 dead code
+
+> **已完成（2026-10-16）**：隨 P0-1 解決，`EmbeddingRouter.route()` 用 `self._threshold` 設定 `accepted`。
 
 `EmbeddingRouter.__init__` 存了 `threshold`（`embedding.py:116`），整個 class 都沒有讀它，實際比門檻的是 cascade。
 刪掉參數，或改成真的由 router 回傳是否通過（若 P0-1 採方案 A 的 `accepted`，可在這裡設定）。

@@ -5,6 +5,10 @@ Confidence 刻意不讓 LLM 自報：structured output schema（`_LLMRouteOutput
 對 LLM 選出的 route 算相似度分數（複用 M2 embedding 層的範例向量），符合
 「confidence 一律用 embedding 相似度或 logprobs，不用 LLM 自報信心」的規則。
 
+這個 confidence **只供觀測**，不決定是否採用：LLM 成功回傳就 `accepted=True`。
+會走到這一層，代表 embedding 相似度已經低於門檻，而這裡的 confidence 是同一張
+相似度表中的一格，必定也低於門檻；拿它比門檻會讓 LLM 的決定永遠被丟棄。
+
 Prompt 組裝把固定的 taxonomy instructions/few-shot（`_FIXED_PREFIX`，模組載入時
 只組一次）與逐次呼叫變動的 query 分開。傳入 `prompt_cache`（M6，見
 `routing/cache/prompt_cache.py`）就會真的接上 Gemini 端的 explicit context
@@ -24,7 +28,7 @@ from app.routing.router.base import BaseRouter
 from app.routing.router.embedding import ROUTE_EXAMPLES, EmbeddingRouter
 from app.routing.taxonomy import Route, RouteDecision, RouterContext
 
-ROUTER_VERSION = "llm-v1"
+ROUTER_VERSION = "llm-v2"
 
 _SYSTEM_INSTRUCTIONS = """你是一個 RAG 系統的 query router。
 你的任務是把使用者的問題分類到以下 6 個類別之一：
@@ -116,5 +120,6 @@ class LLMRouter(BaseRouter):
         return RouteDecision(
             route=output.route,
             confidence=confidence,
+            accepted=True,
             reasoning=output.reasoning,
         )

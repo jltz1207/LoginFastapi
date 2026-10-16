@@ -1,8 +1,8 @@
 """Embedding router（cascade 第二層，~20ms）。
 
 用向量相似度把 query 分到與它最接近的 `ROUTE_EXAMPLES` 範例所屬的類別。
-`threshold=0.70` 與 cascade 的短路門檻共用同一個 `CONFIDENCE_THRESHOLD`
-常數（`routing/taxonomy.py`），不可與 semantic cache 的門檻混用。
+相似度 >= `threshold`（預設 `CONFIDENCE_THRESHOLD`，`routing/taxonomy.py`）時
+`accepted=True`，cascade 據此短路；不可與 semantic cache 的門檻混用。
 
 `score_route()` 額外對外開放，讓 `LLMRouter` 可以複用同一份範例向量，對 LLM
 選出的 route 算「非自報」信心分數，不必重新維護一套相似度邏輯。
@@ -16,7 +16,7 @@ from typing import Protocol
 from app.routing.router.base import BaseRouter
 from app.routing.taxonomy import DEFAULT_ROUTE, CONFIDENCE_THRESHOLD, Route, RouteDecision, RouterContext
 
-ROUTER_VERSION = "embedding-v1"
+ROUTER_VERSION = "embedding-v2"
 
 # 6 類、每類代表性例句。修改這份範例集必須遞增 ROUTER_VERSION。
 ROUTE_EXAMPLES: dict[Route, list[str]] = {
@@ -159,5 +159,6 @@ class EmbeddingRouter(BaseRouter):
         return RouteDecision(
             route=best_route,
             confidence=confidence,
+            accepted=confidence >= self._threshold,
             reasoning=f"embedding: nearest example route={best_route.value} score={confidence:.3f}",
         )

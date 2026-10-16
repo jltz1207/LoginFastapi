@@ -16,7 +16,7 @@ from app.routing.meta_intents import classify_meta_intent
 from app.routing.router.base import BaseRouter
 from app.routing.taxonomy import DEFAULT_ROUTE, Route, RouteDecision, RouterContext
 
-ROUTER_VERSION = "rule-v2"
+ROUTER_VERSION = "rule-v3"
 
 _RULE_CONFIDENCE = 0.95
 
@@ -42,12 +42,14 @@ class RuleRouter(BaseRouter):
             return RouteDecision(
                 route=Route.META,
                 confidence=_RULE_CONFIDENCE,
+                accepted=True,
                 reasoning="rule: META pattern matched",
             )
         if any(p.search(query) for p in _METADATA_PATTERNS):
             return RouteDecision(
                 route=Route.METADATA,
                 confidence=_RULE_CONFIDENCE,
+                accepted=True,
                 reasoning="rule: METADATA pattern matched",
             )
         return RouteDecision(

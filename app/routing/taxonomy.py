@@ -71,6 +71,15 @@ class RouteDecision(BaseModel):
         le=1.0,
         description="必須來自 embedding 相似度或 logprobs，不可為 LLM 自報信心",
     )
+    accepted: bool = Field(
+        default=False,
+        description=(
+            "這個 route 可以直接分派。由產生決策的 router 自己判斷：rule 命中、embedding "
+            "相似度達門檻、LLM 成功回傳即為 True。下游只看這個欄位決定是否採用，不再拿 "
+            "confidence 比門檻——LLM 層的 confidence 是 embedding 分數，拿來比門檻會讓 "
+            "LLM 的決定永遠被否決。"
+        ),
+    )
     filters: dict = Field(
         default_factory=dict,
         description=(

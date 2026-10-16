@@ -23,12 +23,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from app.routing.router.base import BaseRouter
-from app.routing.taxonomy import CONFIDENCE_THRESHOLD, DEFAULT_ROUTE, Route, RouteDecision, RouterContext
+from app.routing.taxonomy import DEFAULT_ROUTE, Route, RouteDecision, RouterContext
 
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
 
-ROUTER_VERSION = "speculative-v1"
+ROUTER_VERSION = "speculative-v2"
 
 # `state` is forwarded untouched to a leaf branch, so it carries whatever the
 # graph state is — now a RoutedAgentState model rather than a plain dict.
@@ -64,7 +64,6 @@ class SpeculativeExecutor:
         router: BaseRouter,
         dispatch: Dispatch,
         speculative_route: Route = DEFAULT_ROUTE,
-        threshold: float = CONFIDENCE_THRESHOLD,
         clock=time.monotonic,
     ):
         """`router`：實際的 router（例如 `CascadeRouter`）。
@@ -75,7 +74,6 @@ class SpeculativeExecutor:
         self._router = router
         self._dispatch = dispatch
         self._speculative_route = speculative_route
-        self._threshold = threshold
         self._clock = clock
 
     async def run(self, query: str, ctx: RouterContext, state: RoutedAgentState) -> SpeculativeResult:
@@ -90,7 +88,8 @@ class SpeculativeExecutor:
             router_task, speculative_task
         )
 
-        actual_route = decision.route if decision.confidence >= self._threshold else DEFAULT_ROUTE
+        # 與 RouterNode 一致：只看 accepted，不拿 confidence 比門檻（否則 LLM 層的決定會被否決）
+        actual_route = decision.route if decision.accepted else DEFAULT_ROUTE
 
         if actual_route == self._speculative_route:
             branch_result = speculative_result
