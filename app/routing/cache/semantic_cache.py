@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import time
 
-from app.routing.router.embedding import EmbeddingsClient, GeminiEmbeddingsClient, cosine_similarity
+from app.routing.router.embedding import EmbeddingsClient, FactoryEmbeddingsClient, cosine_similarity
 from app.routing.taxonomy import RouteDecision, RouterContext
 
 SEMANTIC_CACHE_THRESHOLD = 0.92
@@ -54,7 +54,7 @@ class SemanticCache:
         ttl_seconds: float = DEFAULT_TTL_SECONDS,
         clock=time.monotonic,
     ):
-        self._embeddings = embeddings or GeminiEmbeddingsClient()
+        self._embeddings = embeddings or FactoryEmbeddingsClient()
         self._threshold = threshold
         self._ttl_seconds = ttl_seconds
         self._clock = clock

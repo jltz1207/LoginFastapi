@@ -15,6 +15,7 @@ from app.agent.graphs.routed_rag import RouterNode
 from app.agent.state import RoutedAgentState
 from app.routing.router import defaults
 from app.routing.router import embedding as embedding_module
+from app.routing.router import llm as llm_module
 from app.routing.router.base import BaseRouter
 from app.routing.router.cascade import CascadeRouter
 from app.routing.router.embedding import ROUTE_EXAMPLES, EmbeddingRouter
@@ -138,22 +139,46 @@ def test_failed_query_embedding_is_not_cached():
     assert asyncio.run(router.route("q", _CTX)).route in Route
 
 
-def test_llm_router_builds_structured_model_once():
+def test_llm_router_builds_structured_model_once_from_llm_factory(monkeypatch):
     built = []
 
     class _FakeChatModel:
         def with_structured_output(self, schema):
+            built.append(schema)
             return _FakeStructuredLLM()
 
-    def factory(cached_content):
-        built.append(cached_content)
-        return _FakeChatModel()
+    monkeypatch.setattr(llm_module.LLMFactory, "get_model", classmethod(lambda cls, tools=None: _FakeChatModel()))
 
-    llm = LLMRouter(model_factory=factory, confidence_scorer=EmbeddingRouter(embeddings=_CountingEmbeddings()))
+    llm = LLMRouter(confidence_scorer=EmbeddingRouter(embeddings=_CountingEmbeddings()))
     for _ in range(3):
-        asyncio.run(llm.route("q", _CTX))
+        assert asyncio.run(llm.route("q", _CTX)).route is Route.GLOBAL
 
-    assert built == [None]
+    assert built == [_LLMRouteOutput]
+
+
+def test_embedding_client_uses_embedding_factory(monkeypatch):
+    calls = []
+
+    class _FakeFactoryEmbeddings:
+        async def aembed_documents(self, texts):
+            calls.append(list(texts))
+            return [[1.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr(
+        embedding_module.EmbeddingFactory, "get_embedding_function", classmethod(lambda cls: _FakeFactoryEmbeddings())
+    )
+
+    vectors = asyncio.run(embedding_module.FactoryEmbeddingsClient().embed(["a", "b"]))
+
+    assert vectors == [[1.0, 0.0], [1.0, 0.0]]
+    assert calls == [["a", "b"]]
+
+
+def test_embedding_client_fails_clearly_without_embedding_function(monkeypatch):
+    monkeypatch.setattr(embedding_module.EmbeddingFactory, "get_embedding_function", classmethod(lambda cls: None))
+
+    with pytest.raises(RuntimeError, match="no embedding function"):
+        asyncio.run(embedding_module.FactoryEmbeddingsClient().embed(["a"]))
 
 
 def test_shared_fallback_chain_keeps_degradations_per_request():

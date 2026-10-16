@@ -14,10 +14,11 @@ import math
 from collections import OrderedDict
 from typing import Protocol
 
+from app.rag.embeddings.embedding_factory import EmbeddingFactory
 from app.routing.router.base import BaseRouter
 from app.routing.taxonomy import DEFAULT_ROUTE, CONFIDENCE_THRESHOLD, Route, RouteDecision, RouterContext
 
-ROUTER_VERSION = "embedding-v2"
+ROUTER_VERSION = "embedding-v3"
 
 # query vector 快取上限。同一請求內 `route()` 與 `score_route()` 會 embed 同一個 query，
 # instance 又是跨請求共用（`router/defaults.py`），所以要有上限，不能無限長大。
@@ -80,17 +81,22 @@ class EmbeddingsClient(Protocol):
     async def embed(self, texts: list[str]) -> list[list[float]]: ...
 
 
-class GeminiEmbeddingsClient:
-    """預設 embeddings 來源。測試請注入假的 `EmbeddingsClient`，避免打真的 API。"""
+class FactoryEmbeddingsClient:
+    """預設 embeddings 來源：`EmbeddingFactory.get_embedding_function()`（依 `EMBEDDING_PROVIDE_TYPE`
+    / `EMBEDDING_MODEL`），與主檢索同一套設定。測試請注入假的 `EmbeddingsClient`，避免打真的 API。
+
+    query 與範例句都用 `aembed_documents`：這裡是對稱的相似度比較，兩邊要用同一種 task type。
+    """
 
     def __init__(self, model=None):
         self._model = model
 
     def _get_model(self):
         if self._model is None:
-            from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
-            self._model = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+            model = EmbeddingFactory.get_embedding_function()
+            if model is None:
+                raise RuntimeError("EmbeddingFactory returned no embedding function; check EMBEDDING_MODEL / EMBEDDING_PROVIDE_TYPE")
+            self._model = model
         return self._model
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -116,7 +122,7 @@ class EmbeddingRouter(BaseRouter):
         examples: dict[Route, list[str]] | None = None,
         threshold: float = CONFIDENCE_THRESHOLD,
     ):
-        self._embeddings = embeddings or GeminiEmbeddingsClient()
+        self._embeddings = embeddings or FactoryEmbeddingsClient()
         self._examples = examples if examples is not None else ROUTE_EXAMPLES
         self._threshold = threshold
         self._example_vectors: dict[Route, list[list[float]]] | None = None

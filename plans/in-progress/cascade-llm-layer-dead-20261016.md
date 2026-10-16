@@ -8,7 +8,7 @@
 | Base commit | — |
 | Sessions | `7016af64-bcf9-4458-9c65-39c74352bb1f`<br>`08386c13-baba-4cb7-b734-6b220ebc785e` |
 
-> **狀態：P0-1、P1-1 ～ P1-4、P2-2、P2-3 已完成（2026-10-16，P0-1 採方案 A）；其餘未開始。**
+> **狀態：P0-1、P1-1 ～ P1-4、P2-2 ～ P2-4、P2-6、router 改用 factory 已完成（2026-10-16，P0-1 採方案 A）；P2-1、P2-5 未開始。**
 > review META 分支時順帶發現，見 [review-meta-branch-20261015.md](../finished/review-meta-branch-20261015.md)。
 > 查證日期：2026-10-15。§2 的結論已用假 embedding 模擬實測（Python 3.12.13，程式碼在 §2.2）；
 > 真實 Gemini embedding 下的分佈、延遲數字**未實測**。
@@ -355,7 +355,11 @@ LLM 層的例外並回傳 embedding 層的結果（低於門檻就 LOOKUP），�
 `EmbeddingRouter.__init__` 存了 `threshold`（`embedding.py:116`），整個 class 都沒有讀它，實際比門檻的是 cascade。
 刪掉參數，或改成真的由 router 回傳是否通過（若 P0-1 採方案 A 的 `accepted`，可在這裡設定）。
 
-### [ ] P2-4｜LLM：prompt cache 從未接上
+### [x] P2-4｜LLM：prompt cache 從未接上
+
+> **已完成（2026-10-16）：刪除。** 使用者決定 `LLMRouter` 改用 `LLMFactory`（見下方「router 改用 factory」），
+> provider 不再固定為 Gemini，Gemini 專屬的 `cached_content` 路徑隨之移除：`LLMRouter` 的 `prompt_cache`、`model_factory`
+> 參數與 `app/routing/cache/prompt_cache.py` 一併刪除。ADR 的處理見下方。
 
 細節：[llm-router](../../docs/route/cascade/llm-router-20261016.md) §3.2。
 
@@ -374,19 +378,38 @@ Gemini explicit caching 的最小 token 門檻（未查證）。
 `_LLMRouteOutput` 欄位順序實測為 `['route', 'reasoning']`，模型先決定再解釋，reasoning 對判斷沒有幫助（推論）。
 把 `reasoning` 移到前面（並設為必填）讓模型先想再答，用 P2-1 的評估集比較準確率與延遲後再決定。改動要遞增 `llm.py` 的 `ROUTER_VERSION`。
 
-### [ ] P2-6｜LLM：Gemini 呼叫沒有 timeout
+### [x] P2-6｜LLM：Gemini 呼叫沒有 timeout
 
 `LLMRouter.route()` 呼叫 Gemini 沒有設逾時，延遲沒有上限（推論）。設定 timeout，逾時丟例外，
 交給既有的 fallback 路徑（或 P1-2 決定後由 cascade 自己處理）。
+
+> **已完成（2026-10-16）**：隨「router 改用 factory」解決。`LLMFactory` 建 model 時帶 `timeout` 與 `max_retries`
+> （`LLM_TIMEOUT_SECONDS=15`、`FALLBACK_LLM_TIMEOUT_SECONDS=60`，各 `max_retries=1`）。逾時後先換 fallback model，
+> 全部失敗才丟例外，由 cascade 保底 LOOKUP（P1-2）。
+> 注意（推論，未實測）：最壞情況要等主模型與兩個 fallback 都逾時（含 retry），延遲上限遠大於 cascade docstring 的 ~500ms。
+
+### [x] router 改用 factory（2026-10-16 使用者要求，原列「不在本 plan 範圍」）
+
+- `LLMRouter`：拿掉寫死的 `ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)`，改成第一次呼叫時用
+  `LLMFactory.get_model().with_structured_output(_LLMRouteOutput)` 建立並重用（同 `metadata` / `multi_hop` 分支的做法）。
+  `get_model()` 回傳 `RunnableWithFallbacks`，其 `__getattr__` 會把 `with_structured_output` 一併套到每個 fallback
+  （langchain_core 1.4.7 原始碼確認；以假 key 建立實際物件確認 primary 與 2 個 fallback 都是包過的 `RunnableSequence`）。
+  `ROUTER_VERSION` → `llm-v3`。
+- `EmbeddingRouter`：`GeminiEmbeddingsClient`（寫死 `text-embedding-004`）改為 `FactoryEmbeddingsClient`，用
+  `EmbeddingFactory.get_embedding_function()`（目前 `gemini-embedding-001`）；factory 回傳 `None` 時丟出明確的 `RuntimeError`。
+  query 與範例句仍都用 `aembed_documents`（對稱比較）。`semantic_cache.py` 同步改用。`ROUTER_VERSION` → `embedding-v3`（向量來源改變）。
+- ADR：使用者接受 router 分類不再「只用 Gemini」，改跟其他分支一樣走 `LLMFactory`（含 fallback）；
+  已在 [advanced-router-integration-20261016.md](advanced-router-integration-20261016.md) 決策 3 與 M-INT3 註記。
+- 取捨：
+  - `LLMFactory` 不設 `temperature`，routing 不再固定 `temperature=0`，同一個問題的分類可能不完全穩定（推論）。
+  - embedding 模型換成 `gemini-embedding-001` 後相似度分佈會改變，0.70 門檻更需要 P2-1 校準（推論，未實測）。
+- 測試：`test_router_sharing.py` 改寫 1 個、新增 2 個（`LLMFactory` 只呼叫一次、`EmbeddingFactory` 接線、factory 回傳 `None`）；
+  全部測試 289 passed。
 
 ---
 
 ## 不在本 plan 範圍
 
-- `LLMRouter._default_model_factory` 寫死 `gemini-2.5-flash`、`GeminiEmbeddingsClient` 寫死 `text-embedding-004`，
-  沒有走 `LLMFactory` / `EmbeddingFactory` 與 `.env` 設定（`CLAUDE.md` 的 `EMBEDDING_MODEL` 是 `gemini-embedding-001`）。
-  改走 `EmbeddingFactory` 時一併檢查：`GeminiEmbeddingsClient.embed()` 對 query 也用 `aembed_documents`（document task type），
-  對相似度分數的影響未查證。
 - `SpeculativeExecutor`（`speculative.py`）尚未接進 graph，不受影響。
 
 ## 建議執行順序
@@ -399,7 +422,7 @@ flowchart LR
     P01 --> P23[P2-3 _threshold dead code]
     P21[P2-1 評估集] -.->|修正前後比較| P01
     P13[P1-3 rule METADATA 誤判<br/>+ router 測試] --> P22[P2-2 rule 英文 / confidence]
-    P14[P1-4 router 共用化] --> P24{{"P2-4 prompt cache<br/>（待決定）"}}
+    P14[P1-4 router 共用化] --> P24["P2-4 prompt cache<br/>（已刪除）"]
     P12 --> P26[P2-6 LLM timeout]
     P21 -.-> P25[P2-5 reasoning 欄位順序]
 ```
