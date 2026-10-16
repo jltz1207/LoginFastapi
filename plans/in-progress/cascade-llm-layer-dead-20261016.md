@@ -4,14 +4,21 @@
 |---|---|
 | Author | `Jason` |
 | Created | 2026-10-15 |
-| Branches | `master` |
+| Branches | `master`<br>`worktree-feature-refactor-cascade` |
 | Base commit | — |
-| Sessions | `7016af64-bcf9-4458-9c65-39c74352bb1f` |
+| Sessions | `7016af64-bcf9-4458-9c65-39c74352bb1f`<br>`08386c13-baba-4cb7-b734-6b220ebc785e` |
 
 > **狀態：尚未開始修正。**
 > review META 分支時順帶發現，見 [review-meta-branch-20261015.md](../finished/review-meta-branch-20261015.md)。
 > 查證日期：2026-10-15。§2 的結論已用假 embedding 模擬實測（Python 3.12.13，程式碼在 §2.2）；
 > 真實 Gemini embedding 下的分佈、延遲數字**未實測**。
+>
+> 2026-10-16 更新：逐層解析 rule / embedding / LLM router 後，把三份文件找到的其他問題併入 §4
+> （P1-3、P1-4、P2-2 ～ P2-6，以及 P2-1 的擴充）。各問題的細節與實測程式見：
+> [rule-router](../../docs/route/cascade/rule-router-20261016.md)、
+> [embedding-router](../../docs/route/cascade/embedding-router-20261016.md)、
+> [llm-router](../../docs/route/cascade/llm-router-20261016.md)、
+> [why-llm-layer-never-wins](../../docs/route/cascade/why-llm-layer-never-wins-20261016.md)。
 
 ## Context
 
@@ -188,6 +195,10 @@ asyncio.run(main())
    LLM 選的非 LOOKUP route 會被採用；另外測 fallback chain 的同一情境。
 5. 遞增 `cascade.py`、`llm.py`、`fallback_chain.py` 的 `ROUTER_VERSION`（semantic cache / prompt cache 的 key 綁版本，會自然失效）。
 
+> 附帶解決：目前 LLM 的 few-shot 與 confidence 用同一組 `ROUTE_EXAMPLES`，問題越不像範例（LLM 越有價值），
+> confidence 反而越低（[llm-router](../../docs/route/cascade/llm-router-20261016.md) §3.6）。
+> 方案 A 不再用 confidence 決定是否採用 LLM 結果，這個矛盾隨之消失；方案 B 也不再依賴範例句。
+
 ### [ ] P1-1｜LLM 層不該依賴 embedding API 才能回傳
 
 採方案 A 後，LLM 層的 embedding 分數只用於觀測。`score_route()` 失敗時應該記錄後繼續（confidence 記 0.0），
@@ -200,6 +211,47 @@ LLM 層的例外並回傳 embedding 層的結果（低於門檻就 LOOKUP），�
 
 > 這條會改變 `cascade.py` docstring 裡「信心不足」與「故障復原」刻意分開的設計，修之前要先確認是否接受。
 
+### [ ] P1-3｜Rule：METADATA pattern 太寬，誤判後無法修正
+
+細節：[rule-router](../../docs/route/cascade/rule-router-20261016.md) §4、§5。
+
+`_METADATA_PATTERNS`（`rule.py:25-34`）裡的 `版本(號)?` 與日期格式 `\d{4}[-/年]\d{1,2}` 沒有錨定，query 出現「版本」或任何日期就命中，
+而且一律給 0.95，cascade 直接短路，embedding / LLM 層沒有機會修正。實測誤判（2026-10-16，Python 3.12.13）：
+
+- 「新版本的退款政策有什麼改變」→ METADATA
+- 「2026年1月的營收是多少」→ METADATA
+- 「合約 2025/12 到期後怎麼續約」→ METADATA
+
+步驟：
+
+1. 比照 `meta_intents.py` 的做法，把這兩條 pattern 錨定在「文件 / 檔案 / 這份」等指向文件屬性的字，或改成必須和屬性詞同時出現。
+2. 新增 `tests/routing/test_rule_router.py`：上面三條誤判、rule-router §4 的正確案例都要涵蓋。目前**沒有 METADATA pattern 的 router 測試**。
+3. 遞增 `rule.py` 的 `ROUTER_VERSION`。
+
+### [ ] P1-4｜Router instance 每次請求重建，快取全部失效
+
+細節：[embedding-router](../../docs/route/cascade/embedding-router-20261016.md) §3.1、§3.2，
+[llm-router](../../docs/route/cascade/llm-router-20261016.md) §3.3。
+
+`chats.py:38` 的 `Depends(get_compiled_graph)` 每次請求都重新 build graph，連帶 new 出 `RouterNode` → `CascadeRouter` /
+`FallbackChainRouter` → `EmbeddingRouter` / `LLMRouter`。結果：
+
+- `EmbeddingRouter._ensure_example_vectors()` 的「只算一次」只在單次請求內有效。以假 embedding 實測 3 次請求：
+  embedding 層短路時 embed 111 段文字（共用 instance 只要 39 段）；走到 LLM 層時 222 段（共用只要 78 段）。
+- `LLMRouter` 內部的 confidence scorer 是另一個 `EmbeddingRouter`，36 句範例再 embed 一次。
+- 同一次請求走到 LLM 層時，query 本身被 embed 兩次（`route()` 與 `score_route()` 各一次）。
+- `LLMRouter.route()` 每次呼叫都 new 一個 `ChatGoogleGenerativeAI` 再包 `with_structured_output`。
+
+步驟：
+
+1. router（或至少 `EmbeddingRouter` 的範例向量）改成 process 級共用，例如 module-level singleton 或在 lifespan 建立後注入。
+   cascade 與 fallback chain、`LLMRouter` 的 scorer 共用同一個 `EmbeddingRouter`。
+2. 同一次請求內重用 query vector（例如 `EmbeddingRouter` 內以 query 為 key 的小型快取，或把 vector 放進 `RouteDecision` 傳給下一層）。
+3. `LLMRouter` 的 structured model 在建構時建立一次；有 `cached_content` 時才需要另外建。
+4. 測試：用計數用的假 embedding 斷言 N 次請求只 embed 一次範例集（可改寫 embedding-router §5 的程式）。
+
+> 推論：graph 每次請求重建本身也有成本，但不在本 plan 範圍；本條只處理 router 的共用。
+
 ### [ ] P2-1｜建立 routing 評估集
 
 修正前後都沒有數據可以比較「只用 LLM」、「修好的 cascade」的準確率與延遲。`taxonomy.py` docstring 提到的
@@ -208,6 +260,48 @@ LLM 層的例外並回傳 embedding 層的結果（低於門檻就 LOOKUP），�
 - 收集至少數十條真實問題並標註 route（6 類都要有，特別是不像 `ROUTE_EXAMPLES` 例句的說法）。
 - 量測：各層命中比例、整體準確率、P50 / P95 延遲、每請求 LLM 呼叫次數。
 - 有數據後再決定要不要簡化成只用 LLM（`with_structured_output`）。
+- 用同一份評估集回答以下目前沒有數據的問題（[embedding-router](../../docs/route/cascade/embedding-router-20261016.md) §3.4、§3.5）：
+  - 0.70 門檻在真實 Gemini embedding 下偏嚴還是偏鬆。
+  - 要不要加 margin 判斷（第一名與第二名差距太小時視為沒把握）。
+  - 例句設計：LOOKUP「這份合約的付款條件是什麼？」與 MULTI_HOP「這兩份合約的付款條件哪裡不一樣？」字面幾乎相同，是否造成誤判；
+    META / METADATA 例句多數已被 rule 層攔下，是否該換成換句話說的版本。
+
+### [ ] P2-2｜Rule：英文 METADATA 覆蓋不足、confidence 寫死
+
+細節：[rule-router](../../docs/route/cascade/rule-router-20261016.md) §5。
+
+- METADATA 的英文 pattern 只有 `file type`；實測「who wrote this document」、「when was this uploaded」都落到 LOOKUP 0.0。
+  補英文 pattern（同樣要錨定），並加進 P1-3 的測試。
+- 所有命中一律 0.95：「作者是誰」這種強訊號與「剛好有個日期」這種弱訊號分數相同。P1-3 錨定後若仍有弱 pattern，考慮給較低分數讓 cascade 往下走。
+
+### [ ] P2-3｜Embedding：`self._threshold` 是 dead code
+
+`EmbeddingRouter.__init__` 存了 `threshold`（`embedding.py:116`），整個 class 都沒有讀它，實際比門檻的是 cascade。
+刪掉參數，或改成真的由 router 回傳是否通過（若 P0-1 採方案 A 的 `accepted`，可在這裡設定）。
+
+### [ ] P2-4｜LLM：prompt cache 從未接上
+
+細節：[llm-router](../../docs/route/cascade/llm-router-20261016.md) §3.2。
+
+`app/` 沒有任何地方建立 `PromptCache(...)`，`cascade.py:33`、`fallback_chain.py:32` 都是 `LLMRouter()`，
+所以 `prompt_cache` 永遠是 `None`。`prompt_cache.py` docstring 也承認 `_FIXED_PREFIX`（實測 1422 字元）大概率不到
+Gemini explicit caching 的最小 token 門檻（未查證）。
+
+> 注意：[advanced-router-integration-20261016.md](advanced-router-integration-20261016.md) M-INT3 依 ADR 寫「`_FIXED_PREFIX` + prompt caching 不動」。
+> 決定前要先確認 ADR 的意圖是「保留功能」還是「保留程式碼」。
+
+**待決定**：(a) 查證最小 token 門檻，夠的話在 router 共用化（P1-4）時接上；(b) 不夠就刪除或明確標成未啟用，
+改依 Gemini implicit caching。
+
+### [ ] P2-5｜LLM：structured output 先輸出 route、後輸出 reasoning
+
+`_LLMRouteOutput` 欄位順序實測為 `['route', 'reasoning']`，模型先決定再解釋，reasoning 對判斷沒有幫助（推論）。
+把 `reasoning` 移到前面（並設為必填）讓模型先想再答，用 P2-1 的評估集比較準確率與延遲後再決定。改動要遞增 `llm.py` 的 `ROUTER_VERSION`。
+
+### [ ] P2-6｜LLM：Gemini 呼叫沒有 timeout
+
+`LLMRouter.route()` 呼叫 Gemini 沒有設逾時，延遲沒有上限（推論）。設定 timeout，逾時丟例外，
+交給既有的 fallback 路徑（或 P1-2 決定後由 cascade 自己處理）。
 
 ---
 
@@ -215,6 +309,8 @@ LLM 層的例外並回傳 embedding 層的結果（低於門檻就 LOOKUP），�
 
 - `LLMRouter._default_model_factory` 寫死 `gemini-2.5-flash`、`GeminiEmbeddingsClient` 寫死 `text-embedding-004`，
   沒有走 `LLMFactory` / `EmbeddingFactory` 與 `.env` 設定（`CLAUDE.md` 的 `EMBEDDING_MODEL` 是 `gemini-embedding-001`）。
+  改走 `EmbeddingFactory` 時一併檢查：`GeminiEmbeddingsClient.embed()` 對 query 也用 `aembed_documents`（document task type），
+  對相似度分數的影響未查證。
 - `SpeculativeExecutor`（`speculative.py`）尚未接進 graph，不受影響。
 
 ## 建議執行順序
@@ -224,5 +320,12 @@ flowchart LR
     D{{"待決定：方案 A / B<br/>（先查 Gemini logprobs）"}} --> P01[P0-1 LLM 決定可被採用<br/>+ 回歸測試]
     P01 --> P11[P1-1 解除 embedding 耦合]
     P01 --> P12["P1-2 cascade 中途失敗<br/>（需先確認設計）"]
+    P01 --> P23[P2-3 _threshold dead code]
     P21[P2-1 評估集] -.->|修正前後比較| P01
+    P13[P1-3 rule METADATA 誤判<br/>+ router 測試] --> P22[P2-2 rule 英文 / confidence]
+    P14[P1-4 router 共用化] --> P24{{"P2-4 prompt cache<br/>（待決定）"}}
+    P12 --> P26[P2-6 LLM timeout]
+    P21 -.-> P25[P2-5 reasoning 欄位順序]
 ```
+
+P1-3、P1-4 與 P0-1 互不依賴，可以平行做。

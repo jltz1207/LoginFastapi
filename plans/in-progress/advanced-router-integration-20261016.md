@@ -68,7 +68,7 @@
 
 - ✅ `rule.py`、`fallback_chain.py`、`cascade.py`、`base.py`、`speculative.py` 已搬入，只改 import path。`speculative.py` 仍未接進 graph。
 - ❌ `embedding.py`：`GeminiEmbeddingsClient` **仍直接用** `langchain_google_genai.GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")`，沒有改用 `EmbeddingFactory`（`app/rag/embeddings/embedding_factory.py`）。所以 router 的 embedding model 和 API key 來源跟主檢索是兩套設定。
-- ⚠️ `llm.py`：依 ADR 維持只用 Gemini，`_FIXED_PREFIX` + prompt caching 不動。但**這一層的分類結果永遠被丟棄**，見 [cascade-llm-layer-dead-20261015.md](cascade-llm-layer-dead-20261015.md)。
+- ⚠️ `llm.py`：依 ADR 維持只用 Gemini，`_FIXED_PREFIX` + prompt caching 不動。但**這一層的分類結果永遠被丟棄**，見 [cascade-llm-layer-dead-20261016.md](cascade-llm-layer-dead-20261016.md)。
 - ✅ `resolver.py`：`ResolverNode` 把 `chat_history` 轉成 dialogue turns 餵給 `QueryResolver.resolve()`。
   - 注意：`LLMQueryRewriter` 寫死 `ChatGoogleGenerativeAI(model="gemini-2.5-flash")`，沒走 `LLMFactory`。它不是 branch 的答案生成，決策 3 沒有涵蓋，要不要改還沒決定。
 - 跟 lookup 子圖內的 rewrite 功能不同、不衝突：resolver 解決「這句話依賴對話歷史嗎」，lookup 的 rewrite 解決「這次檢索沒找到東西，換個問法」。兩者都保留。
