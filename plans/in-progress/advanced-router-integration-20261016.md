@@ -4,9 +4,9 @@
 |---|---|
 | Author | `LAPTOP-I592N3QF\user` |
 | Created | — |
-| Branches | — |
+| Branches | —<br>`worktree-feature-refactor-cascade` |
 | Base commit | — |
-| Sessions | — |
+| Sessions | —<br>`08386c13-baba-4cb7-b734-6b220ebc785e` |
 
 > **狀態（2026-10-16 對照 master `4b6e8e0` 更新）：routing graph 已組好並註冊成 `GRAPH_STRATEGY=4`（`ROUTED`），但 `/chat` 還沒改成能跑它，所以實際上還無法使用。** 各 milestone 的進度見下方〈現況總表〉。
 > 以下現況來自閱讀程式碼，未啟動 app 實測。
@@ -22,7 +22,8 @@
 **已與使用者確認的四項關鍵決策**：
 1. **程式碼放置**：複製並改寫成 `app/` 內部模組（非 git submodule），直接改寫成呼叫 AsistAi 既有元件，不維護兩份程式碼。
 2. **LOOKUP 分支**：重用 AsistAi 現有的 lookup 子圖，不用 advanced-router 自己的簡化版 `lookup.py`。
-3. **各分支生成答案的 LLM**：改用 AsistAi 的 `LLMFactory.get_model()`，取代 advanced-router 寫死的 `ChatGoogleGenerativeAI`。**例外**：router 分類本身（`llm.py` 的 cascade 第三層）依 advanced-router `CLAUDE.md` 的 ADR 維持只用 Gemini + prompt caching——分類與生成是兩個不同決策範疇。
+3. **各分支生成答案的 LLM**：改用 AsistAi 的 `LLMFactory.get_model()`，取代 advanced-router 寫死的 `ChatGoogleGenerativeAI`。~~**例外**：router 分類本身（`llm.py` 的 cascade 第三層）依 advanced-router `CLAUDE.md` 的 ADR 維持只用 Gemini + prompt caching——分類與生成是兩個不同決策範疇。~~
+   **已改變（2026-10-16）**：使用者決定 router 分類也改走 `LLMFactory.get_model()`（含 fallback），prompt caching 路徑刪除。見 [cascade-llm-layer-dead-20261016.md](cascade-llm-layer-dead-20261016.md)「router 改用 factory」。
 4. ~~**GLOBAL 分支的 document summary index**：新建 Celery ingestion pipeline。~~
    **已改變（2026-10-14）**：不用 Celery，改成 API process 內的 background worker，summary 存在 `documents.summary` 欄位、不進 Chroma。見 M-INT5。
 
@@ -67,8 +68,8 @@
 ## M-INT3：Router 層改寫（`app/routing/router/`）
 
 - ✅ `rule.py`、`fallback_chain.py`、`cascade.py`、`base.py`、`speculative.py` 已搬入，只改 import path。`speculative.py` 仍未接進 graph。
-- ❌ `embedding.py`：`GeminiEmbeddingsClient` **仍直接用** `langchain_google_genai.GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")`，沒有改用 `EmbeddingFactory`（`app/rag/embeddings/embedding_factory.py`）。所以 router 的 embedding model 和 API key 來源跟主檢索是兩套設定。
-- ⚠️ `llm.py`：依 ADR 維持只用 Gemini，`_FIXED_PREFIX` + prompt caching 不動。但**這一層的分類結果永遠被丟棄**，見 [cascade-llm-layer-dead-20261015.md](cascade-llm-layer-dead-20261015.md)。
+- ✅ `embedding.py`：2026-10-16 起改用 `FactoryEmbeddingsClient`，透過 `EmbeddingFactory.get_embedding_function()` 取得 embedding，與主檢索同一套設定（原本寫死 `text-embedding-004`）。
+- ✅ `llm.py`：2026-10-16 起改用 `LLMFactory.get_model().with_structured_output()`，prompt caching 刪除（取代決策 3 的例外）；原本「分類結果永遠被丟棄」的問題也已修正。見 [cascade-llm-layer-dead-20261016.md](cascade-llm-layer-dead-20261016.md)。
 - ✅ `resolver.py`：`ResolverNode` 把 `chat_history` 轉成 dialogue turns 餵給 `QueryResolver.resolve()`。
   - 注意：`LLMQueryRewriter` 寫死 `ChatGoogleGenerativeAI(model="gemini-2.5-flash")`，沒走 `LLMFactory`。它不是 branch 的答案生成，決策 3 沒有涵蓋，要不要改還沒決定。
 - 跟 lookup 子圖內的 rewrite 功能不同、不衝突：resolver 解決「這句話依賴對話歷史嗎」，lookup 的 rewrite 解決「這次檢索沒找到東西，換個問法」。兩者都保留。

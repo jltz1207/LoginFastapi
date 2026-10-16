@@ -53,9 +53,9 @@ class RoutedAgentState(BaseAgentState):
     # conversation history on this state.
 
     # All defaulted so a caller can build a state from just the query fields;
-    # `route`/`confidence` stay empty until RouterNode writes them, and
-    # `confidence=0.0` falls below CONFIDENCE_THRESHOLD so select_branch's
-    # LOOKUP fallback covers the unrouted case.
+    # `route`/`confidence` stay empty until RouterNode writes them; select_branch
+    # maps the empty `route` to LOOKUP, which covers the unrouted case.
+    # `confidence` is for observability only and never gates dispatch.
     route: str = ""
     confidence: float = 0.0
     filters: dict = {}

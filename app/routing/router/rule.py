@@ -16,21 +16,58 @@ from app.routing.meta_intents import classify_meta_intent
 from app.routing.router.base import BaseRouter
 from app.routing.taxonomy import DEFAULT_ROUTE, Route, RouteDecision, RouterContext
 
-ROUTER_VERSION = "rule-v2"
+ROUTER_VERSION = "rule-v5"
 
+# 命中一律同一個值：是否採用看 `accepted`（命中即 True），confidence 只供觀測，
+# 分強弱不會改變行為。不夠可靠的 pattern 要收窄 pattern 本身，而不是降分。
 _RULE_CONFIDENCE = 0.95
 
 # META patterns live in `routing/meta_intents.py`, shared with the META branch.
+
+# 命中就以 0.95 短路 cascade，所以「版本」與日期都必須錨定：只出現「版本」或某個日期的
+# 內容問題（「新版本的退款政策有什麼改變」、「2026年1月的營收是多少」）要交給下一層。
+_DOCUMENT_REF = r"(文件|檔案|這份|此份|該份|報告|\.(pdf|md|docx)\b)"
+_UPLOAD_ACTION = r"(上傳|發布|發佈|建立|新增)"
+_DATE = r"\d{4}[-/年]\d{1,2}"  # 2026-01-01 / 2026/1 / 2026年1月
 
 _METADATA_PATTERNS = [
     re.compile(r"作者是?誰"),
     re.compile(r"誰(寫|上傳|建立|修改)的"),
     re.compile(r"(上傳|發布|建立|修改)(日期|時間)"),
     re.compile(r"什麼時候(發布|上傳|建立)"),
-    re.compile(r"版本(號)?"),
+    # BY_VERSION：「版本」指同一檔名的上傳紀錄，必須指向文件本身
+    re.compile(_DOCUMENT_REF + r".{0,8}(版本號|版號|版本紀錄|版本歷史|(幾|哪些)個?版本)", re.IGNORECASE),
     re.compile(r"(檔案|文件)類型"),
-    re.compile(r"file type", re.IGNORECASE),
-    re.compile(r"\d{4}[-/年]\d{1,2}"),  # 日期格式，如 2026-01-01 / 2026年1月
+    # BY_DATE_RANGE：日期必須和上傳/建立這類動作一起出現，前後順序都可以
+    re.compile(_DATE + r".{0,12}" + _UPLOAD_ACTION),
+    re.compile(_UPLOAD_ACTION + r".{0,12}" + _DATE),
+]
+
+# 英文版：同樣錨定在指向文件的字，避免 "Who wrote the Declaration of Independence?"、
+# "the new version of the refund policy" 這類一般知識或內容問題被攔下。
+_EN_DOCUMENT_REF = r"\b(documents?|files?|reports?|pdfs?|docs?)\b"
+_EN_MONTH = r"(january|february|march|april|may|june|july|august|september|october|november|december)"
+_EN_DATE = rf"(\d{{4}}[-/]\d{{1,2}}|\b{_EN_MONTH}\b|\b\d{{4}}\b)"
+
+_METADATA_PATTERNS += [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        # author / uploader
+        r"\bwho (wrote|authored|uploaded|created|modified)\b.{0,20}" + _EN_DOCUMENT_REF,
+        r"\b(author|uploader)\b.{0,10}\b(of|for)\b.{0,15}" + _EN_DOCUMENT_REF,
+        _EN_DOCUMENT_REF + r"'s (author|uploader)\b",
+        # upload date
+        r"\b(upload|uploaded|creation|created|modified) (date|time)\b",
+        r"\bwhen (was|were) (it|this|that|these|those|the (document|file|report)s?)\b.{0,20}\b(uploaded|created|added)\b",
+        # BY_VERSION
+        _EN_DOCUMENT_REF + r".{0,30}\b(version history|version number|versions)\b",
+        r"\b(version history|version number|how many versions|which versions|what versions|all versions)\b.{0,30}"
+        + _EN_DOCUMENT_REF,
+        # BY_DOCUMENT_TYPE（取代原本的 "file type"）
+        r"\b(file|document) (types?|formats?)\b",
+        # BY_DATE_RANGE
+        _EN_DOCUMENT_REF + r".{0,20}\b(uploaded|created|added)\b.{0,25}" + _EN_DATE,
+    )
 ]
 
 
@@ -42,12 +79,14 @@ class RuleRouter(BaseRouter):
             return RouteDecision(
                 route=Route.META,
                 confidence=_RULE_CONFIDENCE,
+                accepted=True,
                 reasoning="rule: META pattern matched",
             )
         if any(p.search(query) for p in _METADATA_PATTERNS):
             return RouteDecision(
                 route=Route.METADATA,
                 confidence=_RULE_CONFIDENCE,
+                accepted=True,
                 reasoning="rule: METADATA pattern matched",
             )
         return RouteDecision(

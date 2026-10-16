@@ -21,11 +21,12 @@ class NoOpRouter(BaseRouter):
     只是滿足 `RouteDecision` 的 range 驗證；下游不應該讀這個值做任何判斷。
     """
 
-    router_version = "noop-v1"
+    router_version = "noop-v2"
 
     async def route(self, query: str, ctx: RouterContext) -> RouteDecision:
         return RouteDecision(
             route=DEFAULT_ROUTE,
             confidence=1.0,
+            accepted=True,
             reasoning="NoOpRouter: router disabled, always LOOKUP",
         )

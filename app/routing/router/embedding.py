@@ -1,8 +1,8 @@
 """Embedding router（cascade 第二層，~20ms）。
 
 用向量相似度把 query 分到與它最接近的 `ROUTE_EXAMPLES` 範例所屬的類別。
-`threshold=0.70` 與 cascade 的短路門檻共用同一個 `CONFIDENCE_THRESHOLD`
-常數（`routing/taxonomy.py`），不可與 semantic cache 的門檻混用。
+相似度 >= `threshold`（預設 `CONFIDENCE_THRESHOLD`，`routing/taxonomy.py`）時
+`accepted=True`，cascade 據此短路；不可與 semantic cache 的門檻混用。
 
 `score_route()` 額外對外開放，讓 `LLMRouter` 可以複用同一份範例向量，對 LLM
 選出的 route 算「非自報」信心分數，不必重新維護一套相似度邏輯。
@@ -11,12 +11,18 @@
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from typing import Protocol
 
+from app.rag.embeddings.embedding_factory import EmbeddingFactory
 from app.routing.router.base import BaseRouter
 from app.routing.taxonomy import DEFAULT_ROUTE, CONFIDENCE_THRESHOLD, Route, RouteDecision, RouterContext
 
-ROUTER_VERSION = "embedding-v1"
+ROUTER_VERSION = "embedding-v3"
+
+# query vector 快取上限。同一請求內 `route()` 與 `score_route()` 會 embed 同一個 query，
+# instance 又是跨請求共用（`router/defaults.py`），所以要有上限，不能無限長大。
+_QUERY_CACHE_SIZE = 256
 
 # 6 類、每類代表性例句。修改這份範例集必須遞增 ROUTER_VERSION。
 ROUTE_EXAMPLES: dict[Route, list[str]] = {
@@ -75,17 +81,22 @@ class EmbeddingsClient(Protocol):
     async def embed(self, texts: list[str]) -> list[list[float]]: ...
 
 
-class GeminiEmbeddingsClient:
-    """預設 embeddings 來源。測試請注入假的 `EmbeddingsClient`，避免打真的 API。"""
+class FactoryEmbeddingsClient:
+    """預設 embeddings 來源：`EmbeddingFactory.get_embedding_function()`（依 `EMBEDDING_PROVIDE_TYPE`
+    / `EMBEDDING_MODEL`），與主檢索同一套設定。測試請注入假的 `EmbeddingsClient`，避免打真的 API。
+
+    query 與範例句都用 `aembed_documents`：這裡是對稱的相似度比較，兩邊要用同一種 task type。
+    """
 
     def __init__(self, model=None):
         self._model = model
 
     def _get_model(self):
         if self._model is None:
-            from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
-            self._model = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+            model = EmbeddingFactory.get_embedding_function()
+            if model is None:
+                raise RuntimeError("EmbeddingFactory returned no embedding function; check EMBEDDING_MODEL / EMBEDDING_PROVIDE_TYPE")
+            self._model = model
         return self._model
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -111,13 +122,30 @@ class EmbeddingRouter(BaseRouter):
         examples: dict[Route, list[str]] | None = None,
         threshold: float = CONFIDENCE_THRESHOLD,
     ):
-        self._embeddings = embeddings or GeminiEmbeddingsClient()
+        self._embeddings = embeddings or FactoryEmbeddingsClient()
         self._examples = examples if examples is not None else ROUTE_EXAMPLES
         self._threshold = threshold
         self._example_vectors: dict[Route, list[list[float]]] | None = None
+        self._query_vectors: OrderedDict[str, list[float]] = OrderedDict()
+
+    async def _embed_query(self, query: str) -> list[float]:
+        """query vector 只由文字決定，跨請求共用不會讀到別人的結果；embed 失敗不快取。"""
+        cached = self._query_vectors.get(query)
+        if cached is not None:
+            self._query_vectors.move_to_end(query)
+            return cached
+        vector = (await self._embeddings.embed([query]))[0]
+        self._query_vectors[query] = vector
+        while len(self._query_vectors) > _QUERY_CACHE_SIZE:
+            self._query_vectors.popitem(last=False)
+        return vector
 
     async def _ensure_example_vectors(self) -> dict[Route, list[list[float]]]:
-        """固定範例集的向量只算一次並快取，避免每次呼叫都重算。"""
+        """固定範例集的向量只算一次並快取，避免每次呼叫都重算。
+
+        instance 由 `router/defaults.py` 跨請求共用，快取才會跨請求生效。第一次並行呼叫時
+        可能重複 embed 一次，結果相同，不加 lock（`asyncio.Lock` 會綁定 event loop）。
+        """
         if self._example_vectors is None:
             routes = list(self._examples.keys())
             flat_texts = [text for route in routes for text in self._examples[route]]
@@ -133,7 +161,7 @@ class EmbeddingRouter(BaseRouter):
 
     async def score_route(self, query: str, route: Route) -> float:
         """query 與指定 route 範例集的最大相似度，供 LLMRouter 做非自報信心評分複用。"""
-        query_vec = (await self._embeddings.embed([query]))[0]
+        query_vec = await self._embed_query(query)
         example_vectors = await self._ensure_example_vectors()
         route_vectors = example_vectors.get(route, [])
         if not route_vectors:
@@ -142,7 +170,7 @@ class EmbeddingRouter(BaseRouter):
         return max(0.0, min(1.0, best))
 
     async def route(self, query: str, ctx: RouterContext) -> RouteDecision:
-        query_vec = (await self._embeddings.embed([query]))[0]
+        query_vec = await self._embed_query(query)
         example_vectors = await self._ensure_example_vectors()
 
         best_route = DEFAULT_ROUTE
@@ -159,5 +187,6 @@ class EmbeddingRouter(BaseRouter):
         return RouteDecision(
             route=best_route,
             confidence=confidence,
+            accepted=confidence >= self._threshold,
             reasoning=f"embedding: nearest example route={best_route.value} score={confidence:.3f}",
         )

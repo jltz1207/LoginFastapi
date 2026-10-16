@@ -1,16 +1,19 @@
-"""Gemini structured-output router（cascade 第三層，最慢/最準，~500ms）。
+"""LLM structured-output router（cascade 第三層，最慢/最準，~500ms）。
 
 Confidence 刻意不讓 LLM 自報：structured output schema（`_LLMRouteOutput`）只有
 `route`/`reasoning`，不含 confidence 欄位。Confidence 另外用 `EmbeddingRouter`
 對 LLM 選出的 route 算相似度分數（複用 M2 embedding 層的範例向量），符合
 「confidence 一律用 embedding 相似度或 logprobs，不用 LLM 自報信心」的規則。
 
-Prompt 組裝把固定的 taxonomy instructions/few-shot（`_FIXED_PREFIX`，模組載入時
-只組一次）與逐次呼叫變動的 query 分開。傳入 `prompt_cache`（M6，見
-`routing/cache/prompt_cache.py`）就會真的接上 Gemini 端的 explicit context
-caching：成功的話只送變動的 query，不重複貼一次固定前綴；快取本身失敗（例如內容
-沒到 Gemini 最小快取門檻）就靜默退回原本「固定前綴 + 變動內容」都送的路徑——
-這是效能最佳化，不能讓它變成新的故障點。
+這個 confidence **只供觀測**，不決定是否採用：LLM 成功回傳就 `accepted=True`。
+會走到這一層，代表 embedding 相似度已經低於門檻，而這裡的 confidence 是同一張
+相似度表中的一格，必定也低於門檻；拿它比門檻會讓 LLM 的決定永遠被丟棄。
+也因為只供觀測，算 confidence 失敗（embedding API 故障）時記 log 並給 0.0，
+LLM 的決定照常回傳，不讓 embedding API 的故障連帶讓 LLM 層失敗。
+
+模型由 `LLMFactory.get_model()` 提供（主模型依 `LLM_PROVIDER_TYPE`，失敗時走設定的 fallback
+model），與各分支一致，不再寫死 Gemini。原本 Gemini 專屬的 explicit context caching
+（`prompt_cache`）從未接上、且 provider 不再固定，已移除。
 """
 
 from __future__ import annotations
@@ -19,12 +22,15 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from app.routing.cache.prompt_cache import PromptCache
+from app.core.logging import get_logger
+from app.llm.factory import LLMFactory
 from app.routing.router.base import BaseRouter
 from app.routing.router.embedding import ROUTE_EXAMPLES, EmbeddingRouter
 from app.routing.taxonomy import Route, RouteDecision, RouterContext
 
-ROUTER_VERSION = "llm-v1"
+ROUTER_VERSION = "llm-v3"
+
+logger = get_logger(__name__)
 
 _SYSTEM_INSTRUCTIONS = """你是一個 RAG 系統的 query router。
 你的任務是把使用者的問題分類到以下 6 個類別之一：
@@ -62,59 +68,34 @@ class LLMRouter(BaseRouter):
         self,
         structured_model=None,
         confidence_scorer: EmbeddingRouter | None = None,
-        prompt_cache: PromptCache | None = None,
-        model_factory=None,
     ):
         """`structured_model` 需提供 async `ainvoke(messages) -> _LLMRouteOutput`
         介面（真正型別是 `.with_structured_output(_LLMRouteOutput)` 包過的
-        LangChain chat model）。留空則用 `model_factory` 建立；測試請注入假物件。
-
-        `prompt_cache`：可選。設定後每次呼叫會先嘗試把 `_FIXED_PREFIX` 快取到
-        Gemini 端，成功就只送變動的 query；失敗就靜默退回不快取的路徑。
-
-        `model_factory`：`(cached_content: str | None) -> 原始 chat model` 的
-        建構函式，預設用 Gemini flash（`cached_content` 非 None 時才會傳給它）。
+        LangChain chat model）。留空則第一次呼叫時用 `LLMFactory.get_model()` 建立並重用
+        （instance 由 `router/defaults.py` 跨請求共用）；測試請注入假物件。
         """
         self._structured_model = structured_model
         self._confidence_scorer = confidence_scorer or EmbeddingRouter()
-        self._prompt_cache = prompt_cache
-        self._model_factory = model_factory or self._default_model_factory
 
-    @staticmethod
-    def _default_model_factory(cached_content: str | None):
-        from langchain_google_genai import ChatGoogleGenerativeAI
-
-        kwargs = {"model": "gemini-2.5-flash", "temperature": 0}
-        if cached_content:
-            kwargs["cached_content"] = cached_content
-        return ChatGoogleGenerativeAI(**kwargs)
-
-    async def _resolve_cached_content(self) -> str | None:
-        if self._prompt_cache is None:
-            return None
-        try:
-            return await self._prompt_cache.get_cache_handle(self.router_version, _FIXED_PREFIX)
-        except Exception:  # noqa: BLE001 - 快取失敗要靜默退回不快取，不能讓最佳化變成故障點
-            return None
+    def _get_structured_model(self):
+        if self._structured_model is None:
+            # `get_model()` 回傳 RunnableWithFallbacks，`with_structured_output` 會一併套到每個 fallback
+            self._structured_model = LLMFactory.get_model().with_structured_output(_LLMRouteOutput)
+        return self._structured_model
 
     async def route(self, query: str, ctx: RouterContext) -> RouteDecision:
-        if self._structured_model is not None:
-            structured_model = self._structured_model
-            messages = [("system", _FIXED_PREFIX), ("human", query)]
-        else:
-            cached_content = await self._resolve_cached_content()
-            base_model = self._model_factory(cached_content)
-            structured_model = base_model.with_structured_output(_LLMRouteOutput)
-            if cached_content:
-                # 固定前綴已經在 Gemini 端快取，這裡只送變動的 query，不重複貼一次
-                messages = [("human", query)]
-            else:
-                messages = [("system", _FIXED_PREFIX), ("human", query)]
+        structured_model = self._get_structured_model()
+        messages = [("system", _FIXED_PREFIX), ("human", query)]
 
         output = await structured_model.ainvoke(messages)
-        confidence = await self._confidence_scorer.score_route(query, output.route)
+        try:
+            confidence = await self._confidence_scorer.score_route(query, output.route)
+        except Exception:  # noqa: BLE001 - confidence 只供觀測，embedding API 故障不能拖垮 LLM 層
+            logger.warning("llm router confidence scoring failed", route=output.route.value, exc_info=True)
+            confidence = 0.0
         return RouteDecision(
             route=output.route,
             confidence=confidence,
+            accepted=True,
             reasoning=output.reasoning,
         )
