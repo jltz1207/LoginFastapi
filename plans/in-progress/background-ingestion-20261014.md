@@ -1,6 +1,13 @@
 # Document ingestion 背景化 + document summary 產生
 
-> 建立日期：2026-10-14。Branch：`worktree-feature-add-workers`（base：master `a73f407`）。
+| | |
+|---|---|
+| Author | `LAPTOP-I592N3QF\user` |
+| Created | 2026-10-14 |
+| Branches | `worktree-feature-add-workers` |
+| Base commit | `a73f407` |
+| Sessions | — |
+
 > 查證日期：2026-10-14。Python 3.12、chromadb 1.5.9、langchain-chroma 1.1.0、SQLAlchemy 2.0.51、FastAPI 0.140.0。
 > 狀態：**程式碼與測試已完成（未 commit）。Dev DB migration 尚未執行，等確認，見「待辦」。**
 > 決定事項：2026-10-14 全部照建議（Postgres queue + in-process worker、最後寫 Chroma、summary 失敗不擋、summary-only backfill、拿掉 docx、回 202、先不做 retry endpoint、migration 先給 SQL 再執行）。

@@ -1,7 +1,14 @@
 # Code review：`app/routing/branches/meta.py`
 
+| | |
+|---|---|
+| Author | `Jason` |
+| Created | 2026-10-15 |
+| Branches | `worktree-review-meta-route` |
+| Base commit | — |
+| Sessions | `58e7ee37-9e86-4abe-bd0d-a2c67ecc3a03`<br>`b23e2a97-40c1-4a2c-b318-6b0fe0ba2dde`<br>`7016af64-bcf9-4458-9c65-39c74352bb1f` |
+
 > **狀態：已移除 trace 回傳（commit `1bd1f49`，P0-1、P0-2、P1-1、P1-3 因此結案）；P0-3、P2-1、P2-4 已修（commit `ff0e023`）；P1-2 已修（commit `0f98fbe`）；P2-2 已修（commit `b98788b`）；P2-3 已修。全部項目完成，plan 移到 `finished/`。**
-> Review 日期：2026-10-15。
 > P0-3 的結論已用 `tests/routing/test_meta_branch.py` 實測（Python 3.12.13、pytest 9.1.1，`tests/` 全部 148 passed）；其餘結論來自閱讀程式碼，未實際執行。
 
 ## Context

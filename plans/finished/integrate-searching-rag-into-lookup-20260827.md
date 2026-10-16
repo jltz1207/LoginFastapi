@@ -1,5 +1,13 @@
 # 把 SearchingRagGraphFactory 接成 RoutedGraphFactory 的 LOOKUP 分支
 
+| | |
+|---|---|
+| Author | `Jason` |
+| Created | 2026-08-26 |
+| Branches | — |
+| Base commit | — |
+| Sessions | — |
+
 ## Context
 
 `plans/in-progress/advanced-router-integration-20261016.md`（M-INT4）早就決定 LOOKUP 分支要重用既有的 `SearchingRagGraphFactory`（retrieve→grade→(rewrite→web_search)→generate 自我修正迴圈），不要用 `routing/branches/lookup.py` 自己另外寫的簡化版 retriever/reranker/generator（打裸 `chromadb.Client()`、寫死 `ChatGoogleGenerativeAI`）。但目前 `app/agent/graphs/routed_rag.py` 實際上還是掛著 `branches/lookup.py` 的 `standard_rag_node`，跟計畫文件矛盾；`app/agent/state.py` 裡為了承接這個整合先放的 `RoutedAgentState` 也是壞的（引用了沒 import 的 `ConversationTurn`，且欄位跟 `routed_rag.py` 自己定義的 `RAGState(TypedDict)` 對不上，目前完全沒被用到）。

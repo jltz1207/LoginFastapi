@@ -1,7 +1,14 @@
 # Code review：`app/routing/branches/metadata.py`
 
+| | |
+|---|---|
+| Author | `Jason` |
+| Created | 2026-10-15 |
+| Branches | `master`<br>`worktree-review-metadata-route` |
+| Base commit | — |
+| Sessions | `71440f09-9a87-4419-b829-0c5e845a9bca` |
+
 > **狀態：P0-1 ～ P0-4、P1-1 已修（commit `abbaaf2`）；P1-2 ～ P1-4（commit `cf214d9`）、P2（commit `bf85be7`）已修；Postgres 與真實 LLM 的實測之後另外進行。**
-> Review 日期：2026-10-15。
 > 對照版本：SQLAlchemy 2.0.51（`uv.lock`）。以下結論來自閱讀程式碼，**未實際執行**。
 
 ## Context

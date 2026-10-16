@@ -1,6 +1,13 @@
 # 修正 `tenant_id` 漏填與 tenant scoping
 
-> 建立日期：2026-10-14。Branch：`worktree-tenant-id-fixes`（base：master `42420cf`）。
+| | |
+|---|---|
+| Author | `LAPTOP-I592N3QF\user` |
+| Created | 2026-10-14 |
+| Branches | `worktree-tenant-id-fixes` |
+| Base commit | `42420cf` |
+| Sessions | — |
+
 > 查證日期：2026-10-14。Python 3.12.13、chromadb 1.5.9、SQLAlchemy 2.0.51、FastAPI 0.140.0、pytest 9.1.1。
 
 ## Context

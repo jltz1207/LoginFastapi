@@ -1,5 +1,13 @@
 # 把 advanced-router 整合進 AsistAi
 
+| | |
+|---|---|
+| Author | `LAPTOP-I592N3QF\user` |
+| Created | — |
+| Branches | — |
+| Base commit | — |
+| Sessions | — |
+
 > **狀態（2026-10-16 對照 master `4b6e8e0` 更新）：routing graph 已組好並註冊成 `GRAPH_STRATEGY=4`（`ROUTED`），但 `/chat` 還沒改成能跑它，所以實際上還無法使用。** 各 milestone 的進度見下方〈現況總表〉。
 > 以下現況來自閱讀程式碼，未啟動 app 實測。
 

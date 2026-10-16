@@ -1,8 +1,15 @@
 # Code review：`app/routing/branches/multi_hop.py`
 
+| | |
+|---|---|
+| Author | `Jason` |
+| Created | 2026-09-07 |
+| Branches | — |
+| Base commit | — |
+| Sessions | — |
+
 > **狀態：僅 review，尚未修改任何程式碼。** 下面「建議的修法」是提案，不是已完成的變更。
-> Review 日期：2026-09-07。
-> 同日補充：P1-2（`HybridRetriever` 阻塞 event loop）與文末附錄（`get_retriever` 該不該是 `async`）。
+> 建立當日補充：P1-2（`HybridRetriever` 阻塞 event loop）與文末附錄（`get_retriever` 該不該是 `async`）。
 
 ## Context
 

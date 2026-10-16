@@ -1,5 +1,13 @@
 # 把 hybrid retriever / reranker 抽成 `app/rag/` 底下的可重用 class
 
+| | |
+|---|---|
+| Author | `Jason` |
+| Created | 2026-08-26 |
+| Branches | — |
+| Base commit | — |
+| Sessions | — |
+
 ## Context
 
 `app/routing/branches/lookup.py`（在 [`integrate-searching-rag-into-lookup-20260827.md`](./integrate-searching-rag-into-lookup-20260827.md) 那份計劃裡會被刪除）裡有一組其實設計得不錯、只是接錯基礎設施的元件：`HybridRetriever`/`ChromaHybridRetriever`（Protocol + 實作）跟 `Reranker`/`PassthroughReranker`。問題是它自己 `import chromadb; chromadb.Client()` 開一個全新、非持久化的 in-memory client，跟 `app/vectorstore/collection_manager.py` 的 `Collection_manager`（`app/rag/retriever.py` 現有的 `get_collection_retriever()` 已經在正確用）完全脫節，查不到真正 ingest 進去的資料。
