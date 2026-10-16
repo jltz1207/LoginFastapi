@@ -8,7 +8,7 @@
 | Base commit | — |
 | Sessions | `7016af64-bcf9-4458-9c65-39c74352bb1f`<br>`08386c13-baba-4cb7-b734-6b220ebc785e` |
 
-> **狀態：P0-1、P1-1、P1-2、P2-3 已完成（2026-10-16，P0-1 採方案 A）；其餘未開始。**
+> **狀態：P0-1、P1-1、P1-2、P1-3、P2-3 已完成（2026-10-16，P0-1 採方案 A）；其餘未開始。**
 > review META 分支時順帶發現，見 [review-meta-branch-20261015.md](../finished/review-meta-branch-20261015.md)。
 > 查證日期：2026-10-15。§2 的結論已用假 embedding 模擬實測（Python 3.12.13，程式碼在 §2.2）；
 > 真實 Gemini embedding 下的分佈、延遲數字**未實測**。
@@ -243,7 +243,17 @@ LLM 層的例外並回傳 embedding 層的結果（低於門檻就 LOOKUP），�
 
 > 這條會改變 `cascade.py` docstring 裡「信心不足」與「故障復原」刻意分開的設計，修之前要先確認是否接受。
 
-### [ ] P1-3｜Rule：METADATA pattern 太寬，誤判後無法修正
+### [x] P1-3｜Rule：METADATA pattern 太寬，誤判後無法修正
+
+> **已完成（2026-10-16）**：依 METADATA 分支實際支援的查詢（`BY_VERSION` 是同一檔名的上傳紀錄、`BY_DATE_RANGE` 是上傳日期）錨定：
+> - 版本：必須先出現指向文件的字（`文件`、`檔案`、`這份`、`此份`、`該份`、`報告`、`.pdf/.md/.docx`），8 字內接
+>   `版本號`、`版號`、`版本紀錄`、`版本歷史`、`幾個版本`、`哪些版本`。
+> - 日期：必須和 `上傳`、`發布`、`發佈`、`建立`、`新增` 在 12 字內一起出現，前後順序都可以。
+> - `ROUTER_VERSION` → `rule-v4`。
+> - 測試：新增 `tests/routing/test_rule_router.py`（16 個應命中、9 個不應命中），不應命中的 6 個在修改前的程式碼上失敗；全部測試 255 passed。
+> - 副作用：英文日期查詢（如 embedding 例句 `List all documents uploaded after 2026-01-01.`）原本靠日期 regex 命中，
+>   現在不再被 rule 攔下，改由 embedding 層判斷（該例句本身在 `ROUTE_EXAMPLES` 裡，所以仍會分到 METADATA）。英文 pattern 留給 P2-2。
+> - 已知限制（已實測）：「這份合約的版本紀錄裡付款條件怎麼變」這類同時提到文件與版本紀錄的內容問題仍會命中 METADATA。
 
 細節：[rule-router](../../docs/route/cascade/rule-router-20261016.md) §4、§5。
 
