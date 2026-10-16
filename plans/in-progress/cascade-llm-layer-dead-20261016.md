@@ -8,7 +8,7 @@
 | Base commit | — |
 | Sessions | `7016af64-bcf9-4458-9c65-39c74352bb1f`<br>`08386c13-baba-4cb7-b734-6b220ebc785e` |
 
-> **狀態：P0-1、P1-1、P2-3 已完成（2026-10-16，P0-1 採方案 A）；其餘未開始。**
+> **狀態：P0-1、P1-1、P1-2、P2-3 已完成（2026-10-16，P0-1 採方案 A）；其餘未開始。**
 > review META 分支時順帶發現，見 [review-meta-branch-20261015.md](../finished/review-meta-branch-20261015.md)。
 > 查證日期：2026-10-15。§2 的結論已用假 embedding 模擬實測（Python 3.12.13，程式碼在 §2.2）；
 > 真實 Gemini embedding 下的分佈、延遲數字**未實測**。
@@ -225,7 +225,18 @@ asyncio.run(main())
 採方案 A 後，LLM 層的 embedding 分數只用於觀測。`score_route()` 失敗時應該記錄後繼續（confidence 記 0.0），
 不要讓整個 LLM 層丟例外，解除 §1.1 的故障耦合。
 
-### [ ] P1-2｜cascade 中途失敗時，不要整段重跑
+### [x] P1-2｜cascade 中途失敗時，不要整段重跑
+
+> **已完成（2026-10-16）**：使用者同意改變設計後實作。
+> - `CascadeRouter` 只攔 LLM 層的例外：記 `cascade llm layer failed, falling back to default route` warning（含 `exc_info`），
+>   回傳 LOOKUP（`accepted=True`，confidence 沿用 embedding 層分數，`reasoning` 註明失敗與例外型別）。
+>   LLM 失敗時 fallback chain 重跑也只會得到同樣的 LOOKUP，所以不再交給它。
+> - rule / embedding 層的例外照舊往外丟，由 `RouterNode` 改走 fallback chain。
+> - docstring 改寫為「故障復原原則上仍交給 fallback chain，唯一例外是 LLM 層」；`ROUTER_VERSION` → `cascade-v3`。
+> - 取捨：LLM 失敗不再寫進 `state.trace`（原本 `RouterNode` 會記 `router failed ..., degrading to fallback_chain`），
+>   只留在 log 與 `RouteDecision.reasoning`。沒有用 `last_degradations` 這類 instance 狀態，因為 P1-4 共用 router instance 後會有 race condition
+>   （`FallbackChainRouter.last_degradations` 已有這個問題，見 P1-4）。
+> - 測試：`test_cascade_llm_layer.py` 改寫 1 個、新增 4 個，其中 2 個在修改前的程式碼上失敗；全部測試 230 passed。
 
 LLM 層丟例外時，`RouterNode` 改走 fallback chain，rule / embedding 又重跑一次。可以讓 cascade 自己 catch
 LLM 層的例外並回傳 embedding 層的結果（低於門檻就 LOOKUP），只有 rule / embedding 也失敗時才交給 fallback chain。
@@ -272,6 +283,10 @@ LLM 層的例外並回傳 embedding 層的結果（低於門檻就 LOOKUP），�
 4. 測試：用計數用的假 embedding 斷言 N 次請求只 embed 一次範例集（可改寫 embedding-router §5 的程式）。
 
 > 推論：graph 每次請求重建本身也有成本，但不在本 plan 範圍；本條只處理 router 的共用。
+
+> 注意（2026-10-16 補）：`FallbackChainRouter.last_degradations` 是 instance 狀態，每次 `route()` 開頭清空、過程中寫入，
+> `RouterNode` 事後再讀。router instance 改成跨請求共用後，並行請求會互相覆蓋（race condition）。
+> 共用化之前要先把降級紀錄改成隨 `RouteDecision` 回傳，或由 `route()` 回傳一個 result 物件。
 
 ### [ ] P2-1｜建立 routing 評估集
 

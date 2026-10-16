@@ -204,13 +204,55 @@ def test_cascade_falls_back_to_lookup_when_no_layer_accepts():
     assert decision.confidence == 0.4
 
 
-def test_cascade_still_raises_when_llm_layer_fails():
-    # Call failures stay with RouterNode -> fallback chain (P1-2 has not changed this).
+def test_cascade_falls_back_to_lookup_when_llm_layer_fails():
+    # P1-2: rerunning the fallback chain would only reproduce LOOKUP, so the cascade handles it.
     unsure = RouteDecision(route=Route.GLOBAL, confidence=0.4, accepted=False)
-    cascade = CascadeRouter(rule=_Fixed(unsure), embedding=_Fixed(unsure), llm=_Raises())
+    rule, embedding, llm = _Fixed(unsure), _Fixed(unsure), _Raises()
+    cascade = CascadeRouter(rule=rule, embedding=embedding, llm=llm)
+
+    decision = asyncio.run(cascade.route("q", _CTX))
+
+    assert decision.route is DEFAULT_ROUTE
+    assert decision.accepted
+    assert decision.confidence == 0.4
+    assert "llm layer failed" in decision.reasoning
+    assert (rule.calls, embedding.calls, llm.calls) == (1, 1, 1)
+
+
+@pytest.mark.parametrize("failing", ["rule", "embedding"])
+def test_cascade_still_raises_when_a_fast_layer_fails(failing):
+    # rule / embedding failures stay with RouterNode -> fallback chain.
+    unsure = RouteDecision(route=Route.GLOBAL, confidence=0.4, accepted=False)
+    layers = {"rule": _Fixed(unsure), "embedding": _Fixed(unsure), "llm": _Fixed(unsure)}
+    layers[failing] = _Raises()
 
     with pytest.raises(RuntimeError):
-        asyncio.run(cascade.route("q", _CTX))
+        asyncio.run(CascadeRouter(**layers).route("q", _CTX))
+    assert layers["llm"].calls == 0
+
+
+def test_router_node_does_not_rerun_layers_when_llm_layer_fails():
+    unsure = RouteDecision(route=Route.GLOBAL, confidence=0.4, accepted=False)
+    rule, embedding = _Fixed(unsure), _Fixed(unsure)
+    fallback = _Fixed(RouteDecision(route=Route.META, confidence=0.95, accepted=True))
+    node = RouterNode(router=CascadeRouter(rule=rule, embedding=embedding, llm=_Raises()), fallback=fallback)
+
+    update = asyncio.run(node(_state()))
+
+    assert update["route"] == DEFAULT_ROUTE.value
+    assert fallback.calls == 0
+    assert (rule.calls, embedding.calls) == (1, 1)
+
+
+def test_router_node_uses_fallback_when_embedding_layer_fails():
+    unsure = RouteDecision(route=Route.GLOBAL, confidence=0.4, accepted=False)
+    fallback = _Fixed(RouteDecision(route=Route.MULTI_HOP, confidence=0.3, accepted=True))
+    node = RouterNode(router=CascadeRouter(rule=_Fixed(unsure), embedding=_Raises(), llm=_Fixed(unsure)), fallback=fallback)
+
+    update = asyncio.run(node(_state()))
+
+    assert update["route"] == Route.MULTI_HOP.value
+    assert fallback.calls == 1
 
 
 def test_fallback_chain_drops_unaccepted_non_llm_result_to_lookup():
