@@ -91,6 +91,14 @@ class RouteDecision(BaseModel):
         default=None,
         description="可選，router 分類理由，供除錯與觀測使用，不作為信心來源。",
     )
+    degradations: list[str] = Field(
+        default_factory=list,
+        description=(
+            "產生這個決策時發生的降級（某一層丟例外、結果沒有 accepted 而改回 LOOKUP…），"
+            "每筆自帶來源前綴，`RouterNode` 會併入 `state.trace`。隨決策回傳而不是存在 "
+            "router instance 上，因為 router 跨請求共用，instance 狀態會被並行請求互相覆蓋。"
+        ),
+    )
 
 
 class RouterContext(BaseModel):

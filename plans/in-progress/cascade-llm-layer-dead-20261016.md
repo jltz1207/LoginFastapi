@@ -8,7 +8,7 @@
 | Base commit | — |
 | Sessions | `7016af64-bcf9-4458-9c65-39c74352bb1f`<br>`08386c13-baba-4cb7-b734-6b220ebc785e` |
 
-> **狀態：P0-1、P1-1、P1-2、P1-3、P2-3 已完成（2026-10-16，P0-1 採方案 A）；其餘未開始。**
+> **狀態：P0-1、P1-1 ～ P1-4、P2-3 已完成（2026-10-16，P0-1 採方案 A）；其餘未開始。**
 > review META 分支時順帶發現，見 [review-meta-branch-20261015.md](../finished/review-meta-branch-20261015.md)。
 > 查證日期：2026-10-15。§2 的結論已用假 embedding 模擬實測（Python 3.12.13，程式碼在 §2.2）；
 > 真實 Gemini embedding 下的分佈、延遲數字**未實測**。
@@ -270,7 +270,24 @@ LLM 層的例外並回傳 embedding 層的結果（低於門檻就 LOOKUP），�
 2. 新增 `tests/routing/test_rule_router.py`：上面三條誤判、rule-router §4 的正確案例都要涵蓋。目前**沒有 METADATA pattern 的 router 測試**。
 3. 遞增 `rule.py` 的 `ROUTER_VERSION`。
 
-### [ ] P1-4｜Router instance 每次請求重建，快取全部失效
+### [x] P1-4｜Router instance 每次請求重建，快取全部失效
+
+> **已完成（2026-10-16）**：
+> - **先解 race condition**：`FallbackChainRouter.last_degradations` 移除，降級紀錄改成隨 `RouteDecision.degradations`
+>   （新欄位）回傳，`route()` 內用 local list；`RouterNode` 改把 `decision.degradations` 併入 trace。cascade 的 LLM 失敗也寫進
+>   `degradations`，補回 P1-2 少掉的 trace 紀錄。版本：`fallback-chain-v3`、`cascade-v4`。
+> - **步驟 1**：新增 `app/routing/router/defaults.py`，用 `lru_cache` 建立 process singleton（同 `get_chroma_db()`）：
+>   `get_shared_embedding_router()`、`get_shared_llm_router()`、`get_default_router()`、`get_default_fallback()`。
+>   cascade、fallback chain、`LLMRouter` 的 scorer 共用同一個 `EmbeddingRouter`。`RouterNode` 沒有注入 router 時改用這些。
+> - **步驟 2**：`EmbeddingRouter` 加 query vector 的 LRU 快取（上限 `_QUERY_CACHE_SIZE = 256`，embed 失敗不快取），
+>   `route()` 與 `score_route()` 共用。快取內容只由文字決定，跨請求、跨租戶共用不會讀到別人的結果。
+> - **步驟 3**：`LLMRouter` 沒有 prompt cache 時，structured model 第一次用到才建立，之後重用；有 cache handle 時照舊每次依 handle 建立。
+> - **步驟 4**：新增 `tests/routing/test_router_sharing.py`（10 個）。以計數用假 embedding 跑 3 個走到 LLM 層的請求：
+>   embed 文字數 = 36 + 3 = 39（修改前每請求新建時是 222，見步驟說明）。另測 singleton、LRU 上限、失敗不快取、
+>   model 只建一次、兩個並行請求共用 fallback chain 時降級紀錄不互相污染。全部測試 264 passed。
+> - 沒有加 `asyncio.Lock`：`Lock` 會綁定第一次使用的 event loop。第一次並行呼叫時範例向量可能重複 embed 一次，結果相同。
+> - 推論，未驗證：共用的 Gemini client（`GoogleGenerativeAIEmbeddings`、`ChatGoogleGenerativeAI`）跨請求使用同一個 event loop
+>   沒有問題；若未來在多個 event loop 中使用（例如多 worker thread），需要再確認 client 是否綁定 loop。
 
 細節：[embedding-router](../../docs/route/cascade/embedding-router-20261016.md) §3.1、§3.2，
 [llm-router](../../docs/route/cascade/llm-router-20261016.md) §3.3。

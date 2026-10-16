@@ -22,7 +22,7 @@ from app.routing.router.llm import LLMRouter
 from app.routing.router.rule import RuleRouter
 from app.routing.taxonomy import DEFAULT_ROUTE, RouteDecision, RouterContext
 
-ROUTER_VERSION = "cascade-v3"
+ROUTER_VERSION = "cascade-v4"
 
 logger = get_logger(__name__)
 
@@ -56,11 +56,13 @@ class CascadeRouter(BaseRouter):
             decision = await self._llm.route(query, ctx)
         except Exception as exc:  # noqa: BLE001 - LLM 失敗時 fallback chain 只會重跑出同樣的 LOOKUP
             logger.warning("cascade llm layer failed, falling back to default route", exc_info=True)
+            degradation = f"cascade: llm router failed ({type(exc).__name__}), falling back to default LOOKUP"
             return RouteDecision(
                 route=DEFAULT_ROUTE,
                 confidence=last_confidence,
                 accepted=True,
-                reasoning=f"cascade: llm layer failed ({type(exc).__name__}), 保底 LOOKUP",
+                reasoning=degradation,
+                degradations=[degradation],
             )
         if decision.accepted:
             return decision

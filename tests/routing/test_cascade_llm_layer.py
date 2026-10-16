@@ -153,7 +153,7 @@ def test_fallback_chain_uses_llm_when_embeddings_api_is_down():
 
     assert decision.route is Route.MULTI_HOP
     assert rule.calls == 0
-    assert chain.last_degradations == []
+    assert decision.degradations == []
 
 
 def test_llm_router_still_raises_when_llm_call_fails():
@@ -215,7 +215,8 @@ def test_cascade_falls_back_to_lookup_when_llm_layer_fails():
     assert decision.route is DEFAULT_ROUTE
     assert decision.accepted
     assert decision.confidence == 0.4
-    assert "llm layer failed" in decision.reasoning
+    assert decision.degradations == [decision.reasoning]
+    assert decision.reasoning.startswith("cascade: llm router failed (RuntimeError)")
     assert (rule.calls, embedding.calls, llm.calls) == (1, 1, 1)
 
 
@@ -265,7 +266,7 @@ def test_fallback_chain_drops_unaccepted_non_llm_result_to_lookup():
     assert decision.route is DEFAULT_ROUTE
     assert decision.accepted
     assert rule.calls == 0  # the first layer that answered decides; rule is not consulted
-    assert any("not accepted" in entry for entry in chain.last_degradations)
+    assert any("not accepted" in entry for entry in decision.degradations)
 
 
 def test_fallback_chain_keeps_accepted_embedding_result():

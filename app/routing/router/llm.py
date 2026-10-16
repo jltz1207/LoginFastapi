@@ -88,6 +88,17 @@ class LLMRouter(BaseRouter):
         self._confidence_scorer = confidence_scorer or EmbeddingRouter()
         self._prompt_cache = prompt_cache
         self._model_factory = model_factory or self._default_model_factory
+        # 沒有 prompt cache 時的 structured model，第一次用到才建立，之後重用
+        # （instance 由 `router/defaults.py` 跨請求共用）
+        self._uncached_structured_model = None
+
+    def _structured_model_for(self, cached_content: str | None):
+        if cached_content:
+            # cache handle 可能隨 TTL 更換，綁 handle 的 model 每次照 handle 建立
+            return self._model_factory(cached_content).with_structured_output(_LLMRouteOutput)
+        if self._uncached_structured_model is None:
+            self._uncached_structured_model = self._model_factory(None).with_structured_output(_LLMRouteOutput)
+        return self._uncached_structured_model
 
     @staticmethod
     def _default_model_factory(cached_content: str | None):
@@ -112,8 +123,7 @@ class LLMRouter(BaseRouter):
             messages = [("system", _FIXED_PREFIX), ("human", query)]
         else:
             cached_content = await self._resolve_cached_content()
-            base_model = self._model_factory(cached_content)
-            structured_model = base_model.with_structured_output(_LLMRouteOutput)
+            structured_model = self._structured_model_for(cached_content)
             if cached_content:
                 # 固定前綴已經在 Gemini 端快取，這裡只送變動的 query，不重複貼一次
                 messages = [("human", query)]

@@ -28,8 +28,7 @@ from langchain_core.messages import BaseMessage
 
 from app.routing.resolver import QueryResolver
 from app.routing.router.base import BaseRouter
-from app.routing.router.cascade import CascadeRouter
-from app.routing.router.fallback_chain import FallbackChainRouter
+from app.routing.router.defaults import get_default_fallback, get_default_router
 from app.routing.taxonomy import DEFAULT_ROUTE, Route, RouterContext
 
 _DIALOGUE_TYPES = ("human", "ai")
@@ -93,8 +92,9 @@ class RouterNode:
     """
 
     def __init__(self, router: BaseRouter | None = None, fallback: BaseRouter | None = None):
-        self._router = router or CascadeRouter()
-        self._fallback = fallback or FallbackChainRouter()
+        # 預設用 process 共用的 router：graph 每次請求重建，new 新 router 會讓範例向量快取失效
+        self._router = router or get_default_router()
+        self._fallback = fallback or get_default_fallback()
 
     async def __call__(self, state: RoutedAgentState) -> dict:
         ctx = RouterContext(
@@ -112,9 +112,7 @@ class RouterNode:
         except Exception as exc:  # noqa: BLE001 - 呼叫失敗要降級，不能讓整個 graph 掛掉
             trace.append(f"route: router failed ({type(exc).__name__}: {exc}), degrading to fallback_chain")
             decision = await self._fallback.route(state.resolved_query, ctx)
-            trace.extend(
-                f"fallback_chain: {entry}" for entry in getattr(self._fallback, "last_degradations", [])
-            )
+        trace.extend(decision.degradations)
 
         route = decision.route
         if not decision.accepted:

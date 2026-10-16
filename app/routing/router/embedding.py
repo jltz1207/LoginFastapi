@@ -11,12 +11,17 @@
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from typing import Protocol
 
 from app.routing.router.base import BaseRouter
 from app.routing.taxonomy import DEFAULT_ROUTE, CONFIDENCE_THRESHOLD, Route, RouteDecision, RouterContext
 
 ROUTER_VERSION = "embedding-v2"
+
+# query vector 快取上限。同一請求內 `route()` 與 `score_route()` 會 embed 同一個 query，
+# instance 又是跨請求共用（`router/defaults.py`），所以要有上限，不能無限長大。
+_QUERY_CACHE_SIZE = 256
 
 # 6 類、每類代表性例句。修改這份範例集必須遞增 ROUTER_VERSION。
 ROUTE_EXAMPLES: dict[Route, list[str]] = {
@@ -115,9 +120,26 @@ class EmbeddingRouter(BaseRouter):
         self._examples = examples if examples is not None else ROUTE_EXAMPLES
         self._threshold = threshold
         self._example_vectors: dict[Route, list[list[float]]] | None = None
+        self._query_vectors: OrderedDict[str, list[float]] = OrderedDict()
+
+    async def _embed_query(self, query: str) -> list[float]:
+        """query vector 只由文字決定，跨請求共用不會讀到別人的結果；embed 失敗不快取。"""
+        cached = self._query_vectors.get(query)
+        if cached is not None:
+            self._query_vectors.move_to_end(query)
+            return cached
+        vector = (await self._embeddings.embed([query]))[0]
+        self._query_vectors[query] = vector
+        while len(self._query_vectors) > _QUERY_CACHE_SIZE:
+            self._query_vectors.popitem(last=False)
+        return vector
 
     async def _ensure_example_vectors(self) -> dict[Route, list[list[float]]]:
-        """固定範例集的向量只算一次並快取，避免每次呼叫都重算。"""
+        """固定範例集的向量只算一次並快取，避免每次呼叫都重算。
+
+        instance 由 `router/defaults.py` 跨請求共用，快取才會跨請求生效。第一次並行呼叫時
+        可能重複 embed 一次，結果相同，不加 lock（`asyncio.Lock` 會綁定 event loop）。
+        """
         if self._example_vectors is None:
             routes = list(self._examples.keys())
             flat_texts = [text for route in routes for text in self._examples[route]]
@@ -133,7 +155,7 @@ class EmbeddingRouter(BaseRouter):
 
     async def score_route(self, query: str, route: Route) -> float:
         """query 與指定 route 範例集的最大相似度，供 LLMRouter 做非自報信心評分複用。"""
-        query_vec = (await self._embeddings.embed([query]))[0]
+        query_vec = await self._embed_query(query)
         example_vectors = await self._ensure_example_vectors()
         route_vectors = example_vectors.get(route, [])
         if not route_vectors:
@@ -142,7 +164,7 @@ class EmbeddingRouter(BaseRouter):
         return max(0.0, min(1.0, best))
 
     async def route(self, query: str, ctx: RouterContext) -> RouteDecision:
-        query_vec = (await self._embeddings.embed([query]))[0]
+        query_vec = await self._embed_query(query)
         example_vectors = await self._ensure_example_vectors()
 
         best_route = DEFAULT_ROUTE
