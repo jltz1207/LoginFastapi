@@ -8,7 +8,7 @@
 | Base commit | — |
 | Sessions | `7016af64-bcf9-4458-9c65-39c74352bb1f`<br>`08386c13-baba-4cb7-b734-6b220ebc785e` |
 
-> **狀態：P0-1、P2-3 已完成（2026-10-16，採方案 A）；其餘未開始。**
+> **狀態：P0-1、P1-1、P2-3 已完成（2026-10-16，P0-1 採方案 A）；其餘未開始。**
 > review META 分支時順帶發現，見 [review-meta-branch-20261015.md](../finished/review-meta-branch-20261015.md)。
 > 查證日期：2026-10-15。§2 的結論已用假 embedding 模擬實測（Python 3.12.13，程式碼在 §2.2）；
 > 真實 Gemini embedding 下的分佈、延遲數字**未實測**。
@@ -214,7 +214,13 @@ asyncio.run(main())
 > confidence 反而越低（[llm-router](../../docs/route/cascade/llm-router-20261016.md) §3.6）。
 > 方案 A 不再用 confidence 決定是否採用 LLM 結果，這個矛盾隨之消失；方案 B 也不再依賴範例句。
 
-### [ ] P1-1｜LLM 層不該依賴 embedding API 才能回傳
+### [x] P1-1｜LLM 層不該依賴 embedding API 才能回傳
+
+> **已完成（2026-10-16）**：`LLMRouter.route()` 把 `score_route()` 包在 `try/except`，失敗時記
+> `llm router confidence scoring failed` warning（含 `exc_info`）並給 `confidence=0.0`，仍回傳 `accepted=True`。
+> LLM 呼叫本身失敗仍然丟例外，交給 fallback chain。`ROUTER_VERSION` 未遞增：prompt 與成功時的輸出都沒變。
+> 測試：`test_cascade_llm_layer.py` 新增 3 個（scorer 故障、embedding API 全掛時 fallback chain 採用 LLM、LLM 故障仍丟例外），
+> 前兩個在修改前的程式碼上失敗；全部測試 226 passed。
 
 採方案 A 後，LLM 層的 embedding 分數只用於觀測。`score_route()` 失敗時應該記錄後繼續（confidence 記 0.0），
 不要讓整個 LLM 層丟例外，解除 §1.1 的故障耦合。

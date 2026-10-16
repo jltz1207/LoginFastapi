@@ -8,6 +8,8 @@ Confidence 刻意不讓 LLM 自報：structured output schema（`_LLMRouteOutput
 這個 confidence **只供觀測**，不決定是否採用：LLM 成功回傳就 `accepted=True`。
 會走到這一層，代表 embedding 相似度已經低於門檻，而這裡的 confidence 是同一張
 相似度表中的一格，必定也低於門檻；拿它比門檻會讓 LLM 的決定永遠被丟棄。
+也因為只供觀測，算 confidence 失敗（embedding API 故障）時記 log 並給 0.0，
+LLM 的決定照常回傳，不讓 embedding API 的故障連帶讓 LLM 層失敗。
 
 Prompt 組裝把固定的 taxonomy instructions/few-shot（`_FIXED_PREFIX`，模組載入時
 只組一次）與逐次呼叫變動的 query 分開。傳入 `prompt_cache`（M6，見
@@ -23,12 +25,15 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from app.core.logging import get_logger
 from app.routing.cache.prompt_cache import PromptCache
 from app.routing.router.base import BaseRouter
 from app.routing.router.embedding import ROUTE_EXAMPLES, EmbeddingRouter
 from app.routing.taxonomy import Route, RouteDecision, RouterContext
 
 ROUTER_VERSION = "llm-v2"
+
+logger = get_logger(__name__)
 
 _SYSTEM_INSTRUCTIONS = """你是一個 RAG 系統的 query router。
 你的任務是把使用者的問題分類到以下 6 個類別之一：
@@ -116,7 +121,11 @@ class LLMRouter(BaseRouter):
                 messages = [("system", _FIXED_PREFIX), ("human", query)]
 
         output = await structured_model.ainvoke(messages)
-        confidence = await self._confidence_scorer.score_route(query, output.route)
+        try:
+            confidence = await self._confidence_scorer.score_route(query, output.route)
+        except Exception:  # noqa: BLE001 - confidence 只供觀測，embedding API 故障不能拖垮 LLM 層
+            logger.warning("llm router confidence scoring failed", route=output.route.value, exc_info=True)
+            confidence = 0.0
         return RouteDecision(
             route=output.route,
             confidence=confidence,

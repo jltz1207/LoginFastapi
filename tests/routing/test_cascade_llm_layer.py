@@ -73,6 +73,17 @@ class _Raises(BaseRouter):
         raise RuntimeError("boom")
 
 
+class _BrokenEmbeddings:
+    """Simulates an embeddings API outage."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls += 1
+        raise RuntimeError("embeddings API down")
+
+
 def _unsure_query(emb: _FakeEmbeddings) -> str:
     """First query whose best embedding similarity is below the threshold and not a rule hit."""
     for i in range(100):
@@ -111,6 +122,49 @@ def test_fallback_chain_adopts_llm_route_when_embedding_is_unsure(route):
 
     assert decision.route is route
     assert decision.accepted
+
+
+def test_llm_router_survives_confidence_scoring_failure():
+    broken = _BrokenEmbeddings()
+    llm = LLMRouter(
+        structured_model=_FakeStructuredLLM(Route.GLOBAL),
+        confidence_scorer=EmbeddingRouter(embeddings=broken),
+    )
+
+    decision = asyncio.run(llm.route("q", _CTX))
+
+    assert broken.calls == 1  # scoring was attempted
+    assert decision.route is Route.GLOBAL
+    assert decision.accepted
+    assert decision.confidence == 0.0
+
+
+def test_fallback_chain_uses_llm_when_embeddings_api_is_down():
+    # Before P1-1 the LLM layer failed with the embeddings API, so the chain fell through to rule.
+    broken = _BrokenEmbeddings()
+    rule = _Fixed(RouteDecision(route=Route.META, confidence=0.95, accepted=True))
+    chain = FallbackChainRouter(
+        llm=LLMRouter(structured_model=_FakeStructuredLLM(Route.MULTI_HOP), confidence_scorer=EmbeddingRouter(embeddings=broken)),
+        embedding=EmbeddingRouter(embeddings=broken),
+        rule=rule,
+    )
+
+    decision = asyncio.run(chain.route("q", _CTX))
+
+    assert decision.route is Route.MULTI_HOP
+    assert rule.calls == 0
+    assert chain.last_degradations == []
+
+
+def test_llm_router_still_raises_when_llm_call_fails():
+    class _BrokenLLM:
+        async def ainvoke(self, messages):
+            raise RuntimeError("gemini down")
+
+    llm = LLMRouter(structured_model=_BrokenLLM(), confidence_scorer=EmbeddingRouter(embeddings=_FakeEmbeddings()))
+
+    with pytest.raises(RuntimeError, match="gemini down"):
+        asyncio.run(llm.route("q", _CTX))
 
 
 def test_embedding_router_accepts_only_at_or_above_threshold():
