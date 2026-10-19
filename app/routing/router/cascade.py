@@ -54,7 +54,7 @@ class CascadeRouter(BaseRouter):
         last_confidence = last_decision.confidence if last_decision else 0.0
         try:
             decision = await self._llm.route(query, ctx)
-        except Exception as exc:  # noqa: BLE001 - LLM 失敗時 fallback chain 只會重跑出同樣的 LOOKUP
+        except Exception as exc:  # noqa: BLE001 - LLM 失敗時，保底LOOKUP
             logger.warning("cascade llm layer failed, falling back to default route", exc_info=True)
             degradation = f"cascade: llm router failed ({type(exc).__name__}), falling back to default LOOKUP"
             return RouteDecision(
