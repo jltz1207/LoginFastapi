@@ -8,7 +8,7 @@
 | Base commit | `8f37bf2` |
 | Sessions | `ec0a432b-1d27-49db-8fe0-b374d0cce51d`<br>`a37ab315-a48b-4f04-ac24-1762b2b336eb` |
 
-> 狀態：**P0-1、P0-2 已完成**（未 commit，`tests/routing/test_global_summary_branch.py` 覆蓋），其餘項目尚未開始。
+> 狀態：**P0-1、P0-2 已完成**（commit `8d03bc0`、`59e72f4`）；**P1-1 已完成**（未 commit）。全部由 `tests/routing/test_global_summary_branch.py` 覆蓋，其餘項目尚未開始。
 
 ## Context
 
@@ -96,7 +96,7 @@ flowchart LR
 - 測試：`tests/routing/test_global_summary_branch.py` 新增 7 個測試，涵蓋部分失敗、無失敗、超過門檻、全部失敗、`CancelledError` / `KeyboardInterrupt` 向上傳遞，以及非法 ratio。實測 `tests/` 全部 300 passed（Python 3.12，`uv run --group dev python -m pytest`）。
 - 門檻暫定預設 50%，仍待確認（見「待確認決策」第 1 點）。
 
-### [ ] P1-1｜沒有 cost / budget 上限，也沒有更新 budget counter
+### [x] P1-1｜沒有 cost / budget 上限，也沒有更新 budget counter
 
 LLM 呼叫次數隨文件數線性成長（50 份 → 8 次，500 份 → 72 次），沒有上限。
 `state.token_count` / `tool_calls_count` 沒有更新，而 `generator.py:33-34`、`finalizer.py:72` 都有更新。
@@ -107,6 +107,16 @@ LLM 呼叫次數隨文件數線性成長（50 份 → 8 次，500 份 → 72 次
 2. 每次 LLM 呼叫累加 `response.usage_metadata["total_tokens"]`，寫法比照 `generator.py:28`。`__call__` 回傳 `"token_count": state.token_count + total`。
 
 > 決策待確認：`max_documents` 預設值，以及超過上限時要截斷還是直接拒絕。
+
+#### P1-1 實作結果（2026-10-19，未 commit）
+
+- `__init__` 新增 `max_documents=200`，小於 1 時 raise `ValueError`。超過上限時**截斷**，只取前 200 份；`answer` 結尾加上 `_TRUNCATED_NOTICE`（「共 N 份，只納入 M 份」），`trace` 寫 `docs=M/N`。
+- `_map_reduce()` 改成回傳 `_MapReduceResult(answer, failed_batches, token_count)` dataclass，不再回傳 tuple。每次成功的 LLM call 都累加 `usage_metadata["total_tokens"]`；失敗的 call 沒有 usage，所以不計入。
+- **和修法第 2 點不同**：`token_count` 寫入的是**本次 run 的絕對值**，不是 `state.token_count + total`。原因是 `state.py` 的註解規定 budget counter 採 last-write-wins，由 `retrieve_docs` 在每次 run 開始時歸零；GLOBAL 不會經過 `retrieve_docs`，如果用累加，同一個 thread 連續的 GLOBAL 問題會讓 checkpoint 裡的總數一直變大。`tool_calls_count` 不更新，因為 GLOBAL 沒有 tool call。
+- `trace` 新增 `tokens=N`。
+- 測試新增 6 個：截斷與提示、未超過上限時沒有提示、token 累計、失敗的 call 不計入、token 是每次 run 的絕對值、非法的 `max_documents`。實測 `tests/` 全部 306 passed。
+- 注意：P1-3（`ORDER BY`）還沒做，所以截斷時「前 200 份」是哪 200 份目前不固定。
+- 預設值 200 和「截斷」都是暫定，仍待確認（見「待確認決策」第 2 點）。
 
 ### [ ] P1-2｜Citation 顯示 UUID 而不是檔名
 

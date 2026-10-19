@@ -20,6 +20,9 @@ _MAP_SYSTEM = GLOBAL_SUMMARY_MAP_PROMPT.format_messages(query="", summaries="")[
 _ANSWER_SYSTEM = GLOBAL_SUMMARY_ANSWER_PROMPT.format_messages(query="", summaries="")[0].content
 
 
+_USAGE = {"input_tokens": 7, "output_tokens": 3, "total_tokens": 10}  # per successful call
+
+
 class _FakeLLM:
     def __init__(self):
         self.calls: list[str] = []  # "map" / "answer", in call order
@@ -31,10 +34,10 @@ class _FakeLLM:
             self.calls.append("map")
             if self.map_error is not None and "boom" in messages[1].content:
                 raise self.map_error
-            return AIMessage(content="partial")
+            return AIMessage(content="partial", usage_metadata=_USAGE)
         assert system == _ANSWER_SYSTEM
         self.calls.append("answer")
-        return AIMessage(content="final answer")
+        return AIMessage(content="final answer", usage_metadata=_USAGE)
 
 
 @pytest.fixture
@@ -44,7 +47,9 @@ def llm(monkeypatch):
     return fake
 
 
-def _run(monkeypatch, doc_count: int, batch_size: int = 8, failing_docs: int = 0) -> dict:
+def _run(
+    monkeypatch, doc_count: int, batch_size: int = 8, failing_docs: int = 0, max_documents: int = 200, token_count: int = 0
+) -> dict:
     # The first `failing_docs` summaries contain "boom", so the map batches holding them fail.
     summaries = [
         Chunk(chunk_id=f"d-{i}", content=f"boom {i}" if i < failing_docs else f"summary {i}")
@@ -61,8 +66,9 @@ def _run(monkeypatch, doc_count: int, batch_size: int = 8, failing_docs: int = 0
         knowledge_base_id="kb-1",
         query="這個知識庫在講什麼？",
         resolved_query="這個知識庫在講什麼？",
+        token_count=token_count,
     )
-    return asyncio.run(GlobalSummaryBranch(batch_size=batch_size)(state))
+    return asyncio.run(GlobalSummaryBranch(batch_size=batch_size, max_documents=max_documents)(state))
 
 
 def test_single_document_is_answered_directly(monkeypatch, llm):
@@ -130,3 +136,43 @@ def test_non_exception_base_errors_propagate(monkeypatch, llm, error):
 def test_invalid_max_failure_ratio_rejected():
     with pytest.raises(ValueError):
         GlobalSummaryBranch(max_failure_ratio=1.5)
+
+
+def test_documents_past_max_documents_are_left_out(monkeypatch, llm):
+    result = _run(monkeypatch, 50, max_documents=16)
+    # Only 16 summaries reach map-reduce: 2 map batches + 1 answer call.
+    assert llm.calls == ["map"] * 2 + ["answer"]
+    assert len(result["documents"]) == 16
+    assert result["answer"].endswith(global_summary._TRUNCATED_NOTICE.format(used=16, total=50))
+    assert "docs=16/50" in result["trace"][-1]
+
+
+def test_within_max_documents_adds_no_truncation_notice(monkeypatch, llm):
+    result = _run(monkeypatch, 16, max_documents=16)
+    assert result["answer"] == "final answer"
+    assert "docs=16/16" in result["trace"][-1]
+
+
+def test_token_count_sums_every_successful_call(monkeypatch, llm):
+    result = _run(monkeypatch, 50)
+    # 7 map calls + 1 answer call, 10 tokens each.
+    assert result["token_count"] == 80
+    assert "tokens=80" in result["trace"][-1]
+
+
+def test_token_count_skips_failed_calls(monkeypatch, llm):
+    llm.map_error = RuntimeError("quota exceeded")
+    result = _run(monkeypatch, 50, failing_docs=8)
+    # The failed map batch reports no usage: 6 map + 1 answer.
+    assert result["token_count"] == 70
+
+
+def test_token_count_is_absolute_per_run(monkeypatch, llm):
+    # A previous turn's checkpointed total must not carry over into this run.
+    result = _run(monkeypatch, 1, token_count=1000)
+    assert result["token_count"] == 10
+
+
+def test_invalid_max_documents_rejected():
+    with pytest.raises(ValueError):
+        GlobalSummaryBranch(max_documents=0)

@@ -7,6 +7,7 @@ state 強制取出，不信任 router 輸出的 `state.filters`。
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.core.logging import get_logger
@@ -28,6 +29,14 @@ ROUTER_VERSION = "global-summary-v2"
 
 _NO_SUMMARIES_MESSAGE = "這個知識庫目前沒有可用的摘要索引，請先確認 ingestion pipeline 是否已產生 document summary。"
 _PARTIAL_FAILURE_NOTICE = "\n\n（注意：部分文件摘要處理失敗，這個回答沒有涵蓋知識庫中的所有文件。）"
+_TRUNCATED_NOTICE = "\n\n（注意：知識庫共有 {total} 份文件，這個回答只納入其中 {used} 份。）"
+
+
+@dataclass(frozen=True)
+class _MapReduceResult:
+    answer: str
+    failed_batches: int  # map batches whose documents are left out of the answer
+    token_count: int  # total_tokens summed over every LLM call that returned
 
 async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id: str) -> list[Chunk]:
     get_all_docs_stmt = select(Document.id, Document.summary).where(
@@ -53,14 +62,18 @@ class GlobalSummaryBranch:
         batch_size: int = 8, # one query with 8 chunks
         guard_size: int = 10, # Max: 10 process at the same time
         max_failure_ratio: float = 0.5, # raise when more than this share of a round's map batches fail
+        max_documents: int = 200, # caps LLM calls per query; summaries past it are left out
     ):
         if batch_size < 2:
             raise ValueError("batch_size must be at least 2")
         if not 0 <= max_failure_ratio <= 1:
             raise ValueError("max_failure_ratio must be between 0 and 1")
+        if max_documents < 1:
+            raise ValueError("max_documents must be at least 1")
         self._batch_size = batch_size
         self._guard_size = guard_size
         self._max_failure_ratio = max_failure_ratio
+        self._max_documents = max_documents
 
     async def __call__(self, state: RoutedAgentState) -> dict:
         knowledge_base_id = enforce_knowledge_base_id(state)
@@ -73,14 +86,25 @@ class GlobalSummaryBranch:
                 "trace": state.trace + [f"global: no summaries kb={knowledge_base_id}"],
             }
 
-        answer, failed_batches = await self._map_reduce(query, [s.content for s in summaries], knowledge_base_id)
-        if failed_batches:
+        total_docs = len(summaries)
+        summaries = summaries[: self._max_documents]
+        result = await self._map_reduce(query, [s.content for s in summaries], knowledge_base_id)
+        answer = result.answer
+        if len(summaries) < total_docs:
+            answer += _TRUNCATED_NOTICE.format(used=len(summaries), total=total_docs)
+        if result.failed_batches:
             answer += _PARTIAL_FAILURE_NOTICE
         return {
             "answer": answer,
             "documents": summaries,
+            # Absolute, not added to state.token_count: GLOBAL never passes through
+            # `retrieve_docs`, which is what resets the counters each run.
+            "token_count": result.token_count,
             "trace": state.trace
-            + [f"global: docs={len(summaries)} failed_batches={failed_batches} kb={knowledge_base_id}"],
+            + [
+                f"global: docs={len(summaries)}/{total_docs} failed_batches={result.failed_batches} "
+                f"tokens={result.token_count} kb={knowledge_base_id}"
+            ],
         }
 
     '''
@@ -90,15 +114,18 @@ class GlobalSummaryBranch:
 
     500 份 →  63 → 8 → 1   （3 輪，共 72 次呼叫，但只等 3 個 round trip）
     '''
-    async def _map_reduce(self, query: str, texts: list[str], knowledge_base_id: str) -> tuple[str, int]:
-        """Returns the answer and how many map batches failed (their documents are left out)."""
+    async def _map_reduce(self, query: str, texts: list[str], knowledge_base_id: str) -> _MapReduceResult:
         if not texts:
-            return "", 0
+            return _MapReduceResult(answer="", failed_batches=0, token_count=0)
         sem = asyncio.Semaphore(self._guard_size)
+        token_count = 0
         async def complete(prompt: ChatPromptTemplate, batch: list[str]) -> str:
+                nonlocal token_count
                 llm = LLMFactory.get_model()
                 messages = prompt.format_messages(query=query, summaries="\n\n".join(batch))
                 response = await llm.ainvoke(messages)
+                usage = getattr(response, "usage_metadata", None) or {}
+                token_count += usage.get("total_tokens", 0)
                 content = response.content
                 return content if isinstance(content, str) else str(content)
         async def _guarded(batch: list[str]) -> str:
@@ -135,7 +162,8 @@ class GlobalSummaryBranch:
             if failures / len(batches) > self._max_failure_ratio:
                 raise RuntimeError(f"{failures}/{len(batches)} map batches failed")
             failed_batches += failures
-        return await complete(GLOBAL_SUMMARY_ANSWER_PROMPT, current), failed_batches
+        answer = await complete(GLOBAL_SUMMARY_ANSWER_PROMPT, current)
+        return _MapReduceResult(answer=answer, failed_batches=failed_batches, token_count=token_count)
 
 
 global_summary_node = GlobalSummaryBranch()
