@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from app.core.logging import get_logger
 from app.db.session import get_db_ctx
 from app.llm.factory import LLMFactory
 from app.models.document import Document, IngestionStatus
@@ -21,9 +22,12 @@ if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `age
     from app.agent.state import RoutedAgentState
 import uuid
 
+logger = get_logger(__name__)
+
 ROUTER_VERSION = "global-summary-v2"
 
 _NO_SUMMARIES_MESSAGE = "這個知識庫目前沒有可用的摘要索引，請先確認 ingestion pipeline 是否已產生 document summary。"
+_PARTIAL_FAILURE_NOTICE = "\n\n（注意：部分文件摘要處理失敗，這個回答沒有涵蓋知識庫中的所有文件。）"
 
 async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id: str) -> list[Chunk]:
     get_all_docs_stmt = select(Document.id, Document.summary).where(
@@ -47,12 +51,16 @@ class GlobalSummaryBranch:
     def __init__(
         self,
         batch_size: int = 8, # one query with 8 chunks
-        guard_size: int = 10 # Max: 10 process at the same time
+        guard_size: int = 10, # Max: 10 process at the same time
+        max_failure_ratio: float = 0.5, # raise when more than this share of a round's map batches fail
     ):
         if batch_size < 2:
             raise ValueError("batch_size must be at least 2")
+        if not 0 <= max_failure_ratio <= 1:
+            raise ValueError("max_failure_ratio must be between 0 and 1")
         self._batch_size = batch_size
         self._guard_size = guard_size
+        self._max_failure_ratio = max_failure_ratio
 
     async def __call__(self, state: RoutedAgentState) -> dict:
         knowledge_base_id = enforce_knowledge_base_id(state)
@@ -65,11 +73,14 @@ class GlobalSummaryBranch:
                 "trace": state.trace + [f"global: no summaries kb={knowledge_base_id}"],
             }
 
-        answer = await self._map_reduce(query, [s.content for s in summaries])
+        answer, failed_batches = await self._map_reduce(query, [s.content for s in summaries], knowledge_base_id)
+        if failed_batches:
+            answer += _PARTIAL_FAILURE_NOTICE
         return {
             "answer": answer,
             "documents": summaries,
-            "trace": state.trace + [f"global: docs={len(summaries)} kb={knowledge_base_id}"],
+            "trace": state.trace
+            + [f"global: docs={len(summaries)} failed_batches={failed_batches} kb={knowledge_base_id}"],
         }
 
     '''
@@ -79,9 +90,10 @@ class GlobalSummaryBranch:
 
     500 份 →  63 → 8 → 1   （3 輪，共 72 次呼叫，但只等 3 個 round trip）
     '''
-    async def _map_reduce(self, query: str, texts: list[str]) -> str:
+    async def _map_reduce(self, query: str, texts: list[str], knowledge_base_id: str) -> tuple[str, int]:
+        """Returns the answer and how many map batches failed (their documents are left out)."""
         if not texts:
-            return ""
+            return "", 0
         sem = asyncio.Semaphore(self._guard_size)
         async def complete(prompt: ChatPromptTemplate, batch: list[str]) -> str:
                 llm = LLMFactory.get_model()
@@ -93,6 +105,7 @@ class GlobalSummaryBranch:
             async with sem:
                 return await complete(GLOBAL_SUMMARY_MAP_PROMPT, batch)
         current = texts
+        failed_batches = 0
         # Map only while the summaries do not fit one call; the last call always answers
         # the question, including when there is a single document.
         while len(current) > self._batch_size:
@@ -100,10 +113,29 @@ class GlobalSummaryBranch:
             results = list(
                 await asyncio.gather(*(_guarded(batch) for batch in batches), return_exceptions=True)
             )
-            current = [r for r in results if isinstance(r, str)]
+            current, failures = [], 0
+            for batch_index, r in enumerate(results):
+                if isinstance(r, BaseException) and not isinstance(r, Exception):
+                    # return_exceptions=True also collects CancelledError / KeyboardInterrupt;
+                    # those must propagate, not count as a failed batch.
+                    raise r
+                if isinstance(r, Exception):
+                    failures += 1
+                    logger.warning(
+                        "global_summary.map_batch_failed",
+                        batch_index=batch_index,
+                        knowledge_base_id=knowledge_base_id,
+                        error_type=type(r).__name__,
+                        error=str(r),
+                    )
+                else:
+                    current.append(r)
             if not current:
                 raise RuntimeError("all map batches failed")
-        return await complete(GLOBAL_SUMMARY_ANSWER_PROMPT, current)
+            if failures / len(batches) > self._max_failure_ratio:
+                raise RuntimeError(f"{failures}/{len(batches)} map batches failed")
+            failed_batches += failures
+        return await complete(GLOBAL_SUMMARY_ANSWER_PROMPT, current), failed_batches
 
 
 global_summary_node = GlobalSummaryBranch()

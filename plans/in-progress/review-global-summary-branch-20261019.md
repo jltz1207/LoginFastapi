@@ -8,7 +8,7 @@
 | Base commit | `8f37bf2` |
 | Sessions | `ec0a432b-1d27-49db-8fe0-b374d0cce51d`<br>`a37ab315-a48b-4f04-ac24-1762b2b336eb` |
 
-> 狀態：**P0-1 已完成**（`tests/routing/test_global_summary_branch.py` 覆蓋），其餘項目尚未開始。
+> 狀態：**P0-1、P0-2 已完成**（未 commit，`tests/routing/test_global_summary_branch.py` 覆蓋），其餘項目尚未開始。
 
 ## Context
 
@@ -71,7 +71,7 @@ flowchart LR
     C -->|是| ANS["ANSWER_PROMPT<br/>1 次呼叫"] --> A[answer]
 ```
 
-### [ ] P0-2｜部分 batch 失敗時靜默丟掉文件
+### [x] P0-2｜部分 batch 失敗時靜默丟掉文件
 
 `global_summary.py:103-106`：`gather(..., return_exceptions=True)` 之後只保留 `str` 結果。只要不是全部失敗，失敗的 batch 代表的文件就從答案裡消失，沒有 log，也沒寫進 `trace`。
 `return_exceptions=True` 也會把 `CancelledError` 當成一般結果收進來，然後一樣被過濾掉。
@@ -84,6 +84,17 @@ flowchart LR
 
 > 決策待確認：失敗比例門檻預設 50% 是否合適？還是任何失敗都直接 raise？
 
+#### P0-2 實作結果（2026-10-19，未 commit）
+
+- `GlobalSummaryBranch.__init__` 新增 `max_failure_ratio=0.5`，超出 `[0, 1]` 範圍時 raise `ValueError`。
+- `_map_reduce()` 回傳 `(answer, failed_batches)`。每一輪中：
+  - 不是 `Exception` 的 `BaseException`（`CancelledError`、`KeyboardInterrupt`）一律 re-raise。修法第 1 點原本只寫了 `CancelledError`，實作時擴大到所有非 `Exception`。
+  - `Exception` 用 `logger.warning("global_summary.map_batch_failed", batch_index, knowledge_base_id, error_type, error)` 記錄。
+  - 全部失敗時 raise `"all map batches failed"`；失敗比例 > `max_failure_ratio` 時 raise `"{n}/{total} map batches failed"`。
+  - 最後的 ANSWER call 失敗時直接 raise，不做部分容錯。
+- `__call__` 在 `trace` 寫入 `failed_batches=N`；`N > 0` 時在 `answer` 結尾加上 `_PARTIAL_FAILURE_NOTICE`。
+- 測試：`tests/routing/test_global_summary_branch.py` 新增 7 個測試，涵蓋部分失敗、無失敗、超過門檻、全部失敗、`CancelledError` / `KeyboardInterrupt` 向上傳遞，以及非法 ratio。實測 `tests/` 全部 300 passed（Python 3.12，`uv run --group dev python -m pytest`）。
+- 門檻暫定預設 50%，仍待確認（見「待確認決策」第 1 點）。
 
 ### [ ] P1-1｜沒有 cost / budget 上限，也沒有更新 budget counter
 

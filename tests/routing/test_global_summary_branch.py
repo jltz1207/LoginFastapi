@@ -23,11 +23,14 @@ _ANSWER_SYSTEM = GLOBAL_SUMMARY_ANSWER_PROMPT.format_messages(query="", summarie
 class _FakeLLM:
     def __init__(self):
         self.calls: list[str] = []  # "map" / "answer", in call order
+        self.map_error: BaseException | None = None  # raised by map batches containing "boom"
 
     async def ainvoke(self, messages):
         system = messages[0].content
         if system == _MAP_SYSTEM:
             self.calls.append("map")
+            if self.map_error is not None and "boom" in messages[1].content:
+                raise self.map_error
             return AIMessage(content="partial")
         assert system == _ANSWER_SYSTEM
         self.calls.append("answer")
@@ -41,8 +44,12 @@ def llm(monkeypatch):
     return fake
 
 
-def _run(monkeypatch, doc_count: int, batch_size: int = 8) -> dict:
-    summaries = [Chunk(chunk_id=f"d-{i}", content=f"summary {i}") for i in range(doc_count)]
+def _run(monkeypatch, doc_count: int, batch_size: int = 8, failing_docs: int = 0) -> dict:
+    # The first `failing_docs` summaries contain "boom", so the map batches holding them fail.
+    summaries = [
+        Chunk(chunk_id=f"d-{i}", content=f"boom {i}" if i < failing_docs else f"summary {i}")
+        for i in range(doc_count)
+    ]
 
     async def fake_fetch(tenant_id, user_id, knowledge_base_id):
         return summaries
@@ -80,3 +87,46 @@ def test_answer_prompt_receives_question_and_summaries():
     messages = GLOBAL_SUMMARY_ANSWER_PROMPT.format_messages(query="Q?", summaries="S1\n\nS2")
     assert "Q?" in messages[1].content
     assert "S1\n\nS2" in messages[1].content
+
+
+def test_partial_map_failure_is_reported_not_silent(monkeypatch, llm):
+    llm.map_error = RuntimeError("quota exceeded")
+    # 50 docs / batch 8 → 7 batches; the first batch fails (1/7 ≤ 0.5).
+    result = _run(monkeypatch, 50, failing_docs=8)
+    assert llm.calls[-1] == "answer"
+    assert result["answer"].startswith("final answer")
+    assert result["answer"].endswith(global_summary._PARTIAL_FAILURE_NOTICE)
+    assert "failed_batches=1" in result["trace"][-1]
+
+
+def test_no_failure_adds_no_notice(monkeypatch, llm):
+    result = _run(monkeypatch, 50)
+    assert result["answer"] == "final answer"
+    assert "failed_batches=0" in result["trace"][-1]
+
+
+def test_failure_ratio_above_threshold_raises(monkeypatch, llm):
+    llm.map_error = RuntimeError("quota exceeded")
+    # 4 of 7 batches fail (4/7 > 0.5).
+    with pytest.raises(RuntimeError, match="4/7 map batches failed"):
+        _run(monkeypatch, 50, failing_docs=32)
+    assert "answer" not in llm.calls
+
+
+def test_all_map_batches_failing_raises(monkeypatch, llm):
+    llm.map_error = RuntimeError("quota exceeded")
+    with pytest.raises(RuntimeError, match="all map batches failed"):
+        _run(monkeypatch, 50, failing_docs=50)
+
+
+@pytest.mark.parametrize("error", [asyncio.CancelledError(), KeyboardInterrupt()])
+def test_non_exception_base_errors_propagate(monkeypatch, llm, error):
+    llm.map_error = error
+    with pytest.raises(type(error)):
+        _run(monkeypatch, 50, failing_docs=8)
+    assert "answer" not in llm.calls
+
+
+def test_invalid_max_failure_ratio_rejected():
+    with pytest.raises(ValueError):
+        GlobalSummaryBranch(max_failure_ratio=1.5)
