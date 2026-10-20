@@ -6,9 +6,9 @@
 | Created | 2026-10-19 |
 | Branches | `master` |
 | Base commit | `8f37bf2` |
-| Sessions | `ec0a432b-1d27-49db-8fe0-b374d0cce51d`<br>`a37ab315-a48b-4f04-ac24-1762b2b336eb` |
+| Sessions | `ec0a432b-1d27-49db-8fe0-b374d0cce51d`<br>`a37ab315-a48b-4f04-ac24-1762b2b336eb`<br>`1c8e0770-0856-4368-8eff-395cfab8ddc4` |
 
-> 狀態：**P0-1、P0-2 已完成**（commit `8d03bc0`、`59e72f4`）；**P1-1 已完成**（未 commit）。全部由 `tests/routing/test_global_summary_branch.py` 覆蓋，其餘項目尚未開始。
+> 狀態：**P0-1、P0-2、P1-1 已完成**（commit `8d03bc0`、`59e72f4`、`02a798d`）；**P1-2 已完成**（未 commit）。全部由 `tests/routing/test_global_summary_branch.py` 覆蓋，其餘項目尚未開始。
 
 ## Context
 
@@ -118,12 +118,21 @@ LLM 呼叫次數隨文件數線性成長（50 份 → 8 次，500 份 → 72 次
 - 注意：P1-3（`ORDER BY`）還沒做，所以截斷時「前 200 份」是哪 200 份目前不固定。
 - 預設值 200 和「截斷」都是暫定，仍待確認（見「待確認決策」第 2 點）。
 
-### [ ] P1-2｜Citation 顯示 UUID 而不是檔名
+### [x] P1-2｜Citation 顯示 UUID 而不是檔名
 
 `Chunk` 沒有設定 `source`，所以 `format_citations()`（`common.py:35`）會 fallback 成 `chunk_id`，也就是 document UUID。
 `metadata={"id": doc.id}` 放的是 `uuid.UUID` 物件，混進會被 checkpoint 序列化的 state 裡。
 
 **修法**：select 時加上 `Document.filename`，並設定 `source=doc.filename`、`metadata={"document_id": str(doc.id)}`。key 改名成 `document_id`，和 ingestion 寫進 Chroma 的 chunk metadata 一致。MAP prompt 的每段摘要前面加上 `[filename]`，讓答案可以指出是哪份文件。
+
+#### P1-2 實作結果（2026-10-20，未 commit）
+
+- `fetch_document_summaries()` 多 select `Document.filename`；`Chunk` 設 `source=doc.filename`、`metadata={"document_id": str(doc.id)}`。repo 內沒有其他地方讀 GLOBAL 的 `metadata["id"]`，改 key 不影響其他程式。
+- `__call__` 送進 `_map_reduce()` 的每段文字改成 `"[{filename}]\n{summary}"`。這個標籤在第一輪就加上，所以文件數 ≤ `batch_size`、直接走 ANSWER 的情況也看得到檔名。
+- `GLOBAL_SUMMARY_ANSWER_PROMPT` 新增規則 4：重點來自特定文件時，用 `[document name]` 標籤指出是哪份文件。MAP prompt 原本的規則 3 已經要求保留文件名稱，所以沒有改。
+- `ROUTER_VERSION` 沒有改，仍是 `global-summary-v2`。
+- 測試新增 2 個：`fetch_document_summaries()` 的 row → `Chunk` 轉換（`source`、`str` 的 `document_id`、`format_citations()` 輸出檔名），以及 LLM 收到的摘要帶有 `[filename]` 標籤。實測 `tests/` 全部 308 passed。
+- 測試環境：這個 checkout 沒有 `.env.dev`，`Settings` 會缺 `DATABASE_URL`、`SECRET_KEY`。從 WSL 跑要用假的值，例如 `DATABASE_URL=... SECRET_KEY=<32+ chars> WSLENV=DATABASE_URL:SECRET_KEY uv.exe run --group dev python -m pytest`。
 
 ### [ ] P1-3｜沒有 `ORDER BY`，答案不穩定
 

@@ -6,6 +6,9 @@ so neither the DB nor Gemini is touched.
 """
 
 import asyncio
+import uuid
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -13,7 +16,7 @@ from langchain_core.messages import AIMessage
 from app.agent.state import RoutedAgentState
 from app.rag.prompts import GLOBAL_SUMMARY_ANSWER_PROMPT, GLOBAL_SUMMARY_MAP_PROMPT
 from app.routing.branches import global_summary
-from app.routing.branches.common import Chunk
+from app.routing.branches.common import Chunk, format_citations
 from app.routing.branches.global_summary import GlobalSummaryBranch
 
 _MAP_SYSTEM = GLOBAL_SUMMARY_MAP_PROMPT.format_messages(query="", summaries="")[0].content
@@ -176,3 +179,45 @@ def test_token_count_is_absolute_per_run(monkeypatch, llm):
 def test_invalid_max_documents_rejected():
     with pytest.raises(ValueError):
         GlobalSummaryBranch(max_documents=0)
+
+
+def test_fetched_summaries_cite_filename_with_str_document_id(monkeypatch):
+    doc_id = uuid.uuid4()
+    rows = [SimpleNamespace(id=doc_id, filename="handbook.pdf", summary="Topics: onboarding")]
+
+    class _FakeSession:
+        async def execute(self, stmt):
+            return SimpleNamespace(all=lambda: rows)
+
+    @asynccontextmanager
+    async def fake_db_ctx():
+        yield _FakeSession()
+
+    monkeypatch.setattr(global_summary, "get_db_ctx", fake_db_ctx)
+    chunks = asyncio.run(
+        global_summary.fetch_document_summaries(str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()))
+    )
+    assert chunks[0].source == "handbook.pdf"
+    assert chunks[0].metadata == {"document_id": str(doc_id)}
+    assert format_citations(chunks) == "[1] handbook.pdf"
+
+
+def test_llm_sees_summaries_labelled_with_filename(monkeypatch):
+    received: list[str] = []
+
+    class _RecordingLLM:
+        async def ainvoke(self, messages):
+            received.append(messages[1].content)
+            return AIMessage(content="final answer", usage_metadata=_USAGE)
+
+    async def fake_fetch(tenant_id, user_id, knowledge_base_id):
+        return [Chunk(chunk_id="d-1", content="Topics: onboarding", source="handbook.pdf")]
+
+    monkeypatch.setattr(global_summary.LLMFactory, "get_model", lambda *a, **kw: _RecordingLLM())
+    monkeypatch.setattr(global_summary, "fetch_document_summaries", fake_fetch)
+    state = RoutedAgentState(
+        user_id="u-1", tenant_id="t-1", knowledge_base_id="kb-1", query="q", resolved_query="q"
+    )
+    result = asyncio.run(GlobalSummaryBranch()(state))
+    assert "[handbook.pdf]\nTopics: onboarding" in received[0]
+    assert result["documents"][0].source == "handbook.pdf"

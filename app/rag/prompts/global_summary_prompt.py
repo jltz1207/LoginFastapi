@@ -38,7 +38,9 @@ Strictly observe the following rules:
 1. Use only the summaries provided. Do not add outside knowledge.
 2. Answer the question directly.
 3. If the summaries do not contain enough information to answer, say so clearly.
-4. Write in the same language as the question.
+4. When a point comes from a specific document, name it using the [document name] label
+   it is given.
+5. Write in the same language as the question.
 '''
 
 global_summary_answer_user_prompt_template = '''

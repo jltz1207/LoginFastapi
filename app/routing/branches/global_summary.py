@@ -39,7 +39,7 @@ class _MapReduceResult:
     token_count: int  # total_tokens summed over every LLM call that returned
 
 async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id: str) -> list[Chunk]:
-    get_all_docs_stmt = select(Document.id, Document.summary).where(
+    get_all_docs_stmt = select(Document.id, Document.filename, Document.summary).where(
         Document.knowledge_base_id == uuid.UUID(knowledge_base_id),
         Document.tenant_id == uuid.UUID(tenant_id),
         Document.user_id == uuid.UUID(user_id),
@@ -50,7 +50,17 @@ async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id
     async with get_db_ctx() as db:
         all_docs_result = (await db.execute(get_all_docs_stmt)).all()
 
-    return [Chunk(chunk_id=str(doc.id), content=doc.summary or "", metadata={"id": doc.id}) for doc in all_docs_result]
+    # `document_id` matches the key ingestion writes into Chroma chunk metadata; stored as
+    # str because `documents` is checkpointed and must stay serializable.
+    return [
+        Chunk(
+            chunk_id=str(doc.id),
+            content=doc.summary or "",
+            source=doc.filename,
+            metadata={"document_id": str(doc.id)},
+        )
+        for doc in all_docs_result
+    ]
 
 class GlobalSummaryBranch:
     """`global_summary_node` 的實作（修正原本 `global_summary_node` 是正確的命名。"""
@@ -88,7 +98,9 @@ class GlobalSummaryBranch:
 
         total_docs = len(summaries)
         summaries = summaries[: self._max_documents]
-        result = await self._map_reduce(query, [s.content for s in summaries], knowledge_base_id)
+        # Label each summary with its filename so the answer can say which document a point is from.
+        texts = [f"[{s.source}]\n{s.content}" for s in summaries]
+        result = await self._map_reduce(query, texts, knowledge_base_id)
         answer = result.answer
         if len(summaries) < total_docs:
             answer += _TRUNCATED_NOTICE.format(used=len(summaries), total=total_docs)
