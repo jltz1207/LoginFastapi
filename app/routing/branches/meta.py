@@ -16,7 +16,7 @@ from app.routing.meta_intents import MetaIntent, classify_meta_intent
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
 
-ROUTER_VERSION = "meta-v5"
+ROUTER_VERSION = "meta-v6"
 
 Language = Literal["zh", "en"]
 
@@ -24,13 +24,14 @@ _CJK = re.compile(r"[㐀-鿿豈-﫿]")
 
 # key `None`：embedding / LLM router 判成 META、但 `meta_intents` 的 pattern 沒命中時的回覆。
 # CAPABILITIES 只列目前真的能用的功能；新增/移除 route 或 METADATA query type 時兩種語言都要同步更新。
-# 每行對應：LOOKUP / MULTI_HOP / METADATA（`metadata._ALLOWED_FILE_EXTENSIONS`）/ NO_RETRIEVAL。
-# GLOBAL 刻意不列：ingestion 還不會產生 `Document.summary`，GLOBAL 目前一律回「沒有摘要索引」。
+# 每行對應：LOOKUP / GLOBAL / MULTI_HOP / METADATA（`metadata._ALLOWED_FILE_EXTENSIONS`）/ NO_RETRIEVAL。
+# GLOBAL 依賴 ingestion 產生的 `Document.summary`（`app/ingestion/summarizer.py`）。
 _REPLIES: dict[Language, dict[MetaIntent | None, str]] = {
     "zh": {
         MetaIntent.CAPABILITIES: (
             "我是這個知識庫的查詢助理，可以：\n"
             "- 回答知識庫文件裡的具體內容\n"
+            "- 摘要整個知識庫，或歸納多份文件的共同主題\n"
             "- 比較多份文件，或回答需要串連多處內容的問題\n"
             "- 依上傳日期、檔案類型（pdf / md），或同一檔名的歷次上傳版本查文件\n"
             "- 直接回答不需要查知識庫的常識性問題"
@@ -42,6 +43,7 @@ _REPLIES: dict[Language, dict[MetaIntent | None, str]] = {
         MetaIntent.CAPABILITIES: (
             "I'm the query assistant for this knowledge base. I can:\n"
             "- Answer questions about the content of your documents\n"
+            "- Summarize the whole knowledge base, or find the common themes across documents\n"
             "- Compare documents, or answer questions that connect information across several places\n"
             "- Find documents by upload date, file type (pdf / md), or the upload history of a file name\n"
             "- Answer general-knowledge questions that don't need the knowledge base"

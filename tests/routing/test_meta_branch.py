@@ -84,9 +84,9 @@ def test_non_meta_queries_do_not_match(query):
 @pytest.mark.parametrize(
     "language,banned",
     [
-        # `documents` has no author column; GLOBAL has no summaries until ingestion generates them.
-        ("zh", ["作者", "摘要"]),
-        ("en", ["author", "summar"]),
+        # `documents` has no author column.
+        ("zh", ["作者"]),
+        ("en", ["author"]),
     ],
 )
 def test_capabilities_reply_only_claims_supported_metadata_queries(language, banned):
@@ -99,6 +99,12 @@ def test_capabilities_reply_only_claims_supported_metadata_queries(language, ban
     assert "docx" not in reply  # no docx loader: upload rejects it
     for word in banned:
         assert word not in reply.lower()
+
+
+@pytest.mark.parametrize("language,word", [("zh", "摘要"), ("en", "summarize")])
+def test_capabilities_reply_lists_global_summaries(language, word):
+    # Ingestion now writes `documents.summary`, so the GLOBAL branch can answer.
+    assert word in _REPLIES[language][MetaIntent.CAPABILITIES].lower()
 
 
 def test_both_languages_cover_the_same_intents():
