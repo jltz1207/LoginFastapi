@@ -121,6 +121,21 @@ def test_miss_then_put_embeds_the_query_once():
     assert embeddings.calls == 1
 
 
+def test_hit_does_not_replay_old_degradations():
+    cache = _cache()
+    degraded = _DECISION.model_copy(update={"degradations": ["fallback_chain: llm router failed"]})
+
+    async def run():
+        await cache.put("q", _CTX_A, "v1", degraded)
+        return await cache.get("q", _CTX_A, "v1")
+
+    hit = asyncio.run(run())
+
+    assert hit.route == Route.GLOBAL
+    assert hit.degradations == []
+    assert degraded.degradations == ["fallback_chain: llm router failed"]  # caller's copy untouched
+
+
 def test_invalid_max_entries():
     with pytest.raises(ValueError):
         SemanticCache(embeddings=_Embeddings(), max_entries=0)

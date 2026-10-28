@@ -16,6 +16,9 @@
    失效）。
 2. 另外疊加 `ttl_seconds`：處理「router_version 沒變，但知識庫內容已經更新，
    舊決策可能過時」這種情況，超過 TTL 的項目一樣會被濾掉。
+3. `max_entries`：整個 cache 的項目上限，超過時丟掉最舊的項目。
+
+**Experimental，還沒接進 graph**（`app/agent/graphs/routed_rag.py` 的 `RouterNode` 沒有使用它）。
 """
 
 from __future__ import annotations
@@ -122,7 +125,8 @@ class SemanticCache:
             _CacheEntry(
                 cache_key=cache_key,
                 vector=query_vec,
-                decision=decision,
+                # 降級紀錄只屬於產生它的那一輪；命中時帶回去會讓 trace 出現這一輪沒發生的降級
+                decision=decision.model_copy(update={"degradations": []}),
                 router_version=router_version,
                 created_at=self._clock(),
             )
