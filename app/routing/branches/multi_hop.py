@@ -194,13 +194,15 @@ class MultiHopBranch:
             if not new_sub_queries:
                 break
 
-            for sub_query in new_sub_queries:
-                chunks = await self.retrieve(retriever, sub_query)
+            # 同一輪的 sub-query 彼此沒有依賴，並行檢索；結果依原順序 append。
+            # cost 檢查因此在整輪結束後做，一輪最多超出上限一輪的量。
+            results = await asyncio.gather(*(self.retrieve(retriever, q) for q in new_sub_queries))
+            for sub_query, chunks in zip(new_sub_queries, results):
                 cost_units += _estimate_cost(sub_query, chunks)
                 hops.append(HopResult(sub_query=sub_query, chunks=chunks))
-                if cost_units >= self._max_cost_units:
-                    guardrail_hits.append("cost_cap")
-                    return
+            if cost_units >= self._max_cost_units:
+                guardrail_hits.append("cost_cap")
+                return
         else:
             guardrail_hits.append("recursion_limit")
 

@@ -179,6 +179,44 @@ def test_recursion_limit_is_recorded():
     assert "recursion_limit" in update["trace"][-1]
 
 
+def test_sub_queries_in_one_round_run_concurrently():
+    in_flight = 0
+    peak = 0
+
+    async def run(query):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return [Document(id=f"doc:{query}", page_content=query)]
+
+    branch = MultiHopBranch(
+        decomposer=_ScriptedDecomposer([["A", "B", "C"]]),
+        retriever=RunnableLambda(run),
+        synthesizer=_StubSynthesizer(),
+    )
+
+    update = asyncio.run(branch(_state()))
+
+    assert peak == 3
+    assert [c.chunk_id for c in update["documents"]] == ["doc:A", "doc:B", "doc:C"]
+
+
+def test_cost_cap_stops_after_the_round():
+    branch = MultiHopBranch(
+        decomposer=_ScriptedDecomposer([["A", "B"], ["C"]]),
+        retriever=_retriever(),
+        synthesizer=_StubSynthesizer(),
+        max_cost_units=1,
+    )
+
+    update = asyncio.run(branch(_state()))
+
+    assert [c.chunk_id for c in update["documents"]] == ["doc:A", "doc:B"]
+    assert "cost_cap" in update["trace"][-1]
+
+
 def test_default_retriever_is_hybrid_with_rerank(monkeypatch):
     from app.routing.branches import multi_hop
 
