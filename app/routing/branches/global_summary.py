@@ -7,8 +7,12 @@ state 強制取出，不信任 router 輸出的 `state.filters`。
 from __future__ import annotations
 
 import asyncio
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from langchain_core.prompts import ChatPromptTemplate
+from sqlalchemy import select
 
 from app.core.logging import get_logger
 from app.db.session import get_db_ctx
@@ -17,17 +21,14 @@ from app.models.document import Document, IngestionStatus
 from app.rag.prompts import GLOBAL_SUMMARY_ANSWER_PROMPT, GLOBAL_SUMMARY_MAP_PROMPT
 from app.routing.branches.common import Chunk, enforce_knowledge_base_id
 
-from langchain_core.prompts import ChatPromptTemplate
-from sqlalchemy import select
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
-import uuid
 
 logger = get_logger(__name__)
 
 ROUTER_VERSION = "global-summary-v2"
 
-_NO_SUMMARIES_MESSAGE = "這個知識庫目前沒有可用的摘要索引，請先確認 ingestion pipeline 是否已產生 document summary。"
+_NO_SUMMARIES_MESSAGE = "這個知識庫目前沒有已完成處理的文件摘要，請稍後再試，或確認文件已上傳成功。"
 _PARTIAL_FAILURE_NOTICE = "\n\n（注意：部分文件摘要處理失敗，這個回答沒有涵蓋知識庫中的所有文件。）"
 _TRUNCATED_NOTICE = "\n\n（注意：知識庫共有 {total} 份文件，這個回答只納入其中 {used} 份。）"
 
@@ -38,7 +39,8 @@ class _MapReduceResult:
     failed_batches: int  # map batches whose documents are left out of the answer
     token_count: int  # total_tokens summed over every LLM call that returned
 
-async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id: str) -> list[Chunk]:
+
+async def fetch_document_summaries(tenant_id: str, user_id: str, knowledge_base_id: str) -> list[Chunk]:
     get_all_docs_stmt = select(Document.id, Document.filename, Document.summary).where(
         Document.knowledge_base_id == uuid.UUID(knowledge_base_id),
         Document.tenant_id == uuid.UUID(tenant_id),
@@ -68,17 +70,18 @@ async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id
         for doc in all_docs_result
     ]
 
+
 class GlobalSummaryBranch:
-    """`global_summary_node` 的實作（修正原本 `global_summary_node` 是正確的命名。"""
+    """GLOBAL 分支的 node 實作（原名 `lobal_summary_node` 是 typo）。"""
 
     router_version = ROUTER_VERSION
 
     def __init__(
         self,
-        batch_size: int = 8, # one query with 8 chunks
-        guard_size: int = 10, # process-wide cap on concurrent LLM calls, shared by every request
-        max_failure_ratio: float = 0.5, # raise when more than this share of a round's map batches fail
-        max_documents: int = 200, # caps LLM calls per query; summaries past it are left out
+        batch_size: int = 8,  # summaries per LLM call
+        guard_size: int = 10,  # process-wide cap on concurrent LLM calls, shared by every request
+        max_failure_ratio: float = 0.5,  # raise when more than this share of a round's map batches fail
+        max_documents: int = 200,  # caps LLM calls per query; summaries past it are left out
     ):
         if batch_size < 2:
             raise ValueError("batch_size must be at least 2")
@@ -130,36 +133,41 @@ class GlobalSummaryBranch:
             ],
         }
 
-    '''
-    50 份摘要
-      ├─ 第 1 輪：7 個 batch → 7 次 LLM（並行）→ 7 段中間摘要
-      └─ 第 2 輪：1 個 batch → 1 次 LLM          → 最終答案
-
-    500 份 →  63 → 8 → 1   （3 輪，共 72 次呼叫，但只等 3 個 round trip）
-    '''
     async def _map_reduce(self, query: str, texts: list[str], knowledge_base_id: str) -> _MapReduceResult:
+        """摘要放不進一次呼叫時先用 MAP 並行濃縮，最後一次呼叫一定用 ANSWER 回答問題（以 batch_size=8 為例）：
+
+        1 份摘要   → 1 次 ANSWER
+        50 份摘要
+          ├─ 第 1 輪：7 個 batch → 7 次 MAP（並行）→ 7 段中間摘要
+          └─ 第 2 輪：7 ≤ 8      → 1 次 ANSWER       → 最終答案
+
+        500 份 → 63 → 8 → 1   （63 + 8 次 MAP + 1 次 ANSWER，共 72 次呼叫，但只等 3 個 round trip）
+        """
         if not texts:
             return _MapReduceResult(answer="", failed_batches=0, token_count=0)
         token_count = 0
+
         async def complete(prompt: ChatPromptTemplate, batch: list[str]) -> str:
-                nonlocal token_count
-                llm = LLMFactory.get_model()
-                messages = prompt.format_messages(query=query, summaries="\n\n".join(batch))
-                # Every LLM call, the final ANSWER included, counts against the shared cap.
-                async with self._guard:
-                    response = await llm.ainvoke(messages)
-                usage = getattr(response, "usage_metadata", None) or {}
-                token_count += usage.get("total_tokens", 0)
-                content = response.content
-                return content if isinstance(content, str) else str(content)
+            nonlocal token_count
+            llm = LLMFactory.get_model()
+            messages = prompt.format_messages(query=query, summaries="\n\n".join(batch))
+            # Every LLM call, the final ANSWER included, counts against the shared cap.
+            async with self._guard:
+                response = await llm.ainvoke(messages)
+            usage = getattr(response, "usage_metadata", None) or {}
+            token_count += usage.get("total_tokens", 0)
+            content = response.content
+            return content if isinstance(content, str) else str(content)
+
         current = texts
         failed_batches = 0
         # Map only while the summaries do not fit one call; the last call always answers
         # the question, including when there is a single document.
         while len(current) > self._batch_size:
             batches = [current[i : i + self._batch_size] for i in range(0, len(current), self._batch_size)]
-            results = list(
-                await asyncio.gather(*(complete(GLOBAL_SUMMARY_MAP_PROMPT, batch) for batch in batches), return_exceptions=True)
+            results = await asyncio.gather(
+                *(complete(GLOBAL_SUMMARY_MAP_PROMPT, batch) for batch in batches),
+                return_exceptions=True,
             )
             current, failures = [], 0
             for batch_index, r in enumerate(results):

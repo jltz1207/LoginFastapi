@@ -6,9 +6,9 @@
 | Created | 2026-10-19 |
 | Branches | `master` |
 | Base commit | `8f37bf2` |
-| Sessions | `ec0a432b-1d27-49db-8fe0-b374d0cce51d`<br>`a37ab315-a48b-4f04-ac24-1762b2b336eb`<br>`1c8e0770-0856-4368-8eff-395cfab8ddc4` |
+| Sessions | `ec0a432b-1d27-49db-8fe0-b374d0cce51d`<br>`a37ab315-a48b-4f04-ac24-1762b2b336eb`<br>`1c8e0770-0856-4368-8eff-395cfab8ddc4`<br>`97b4d2fb-df87-48e3-b2aa-7b6a564674bd` |
 
-> 狀態：**P0-1、P0-2、P1-1 已完成**（commit `8d03bc0`、`59e72f4`、`02a798d`）；**P1-2 已完成**（commit `ef37efe`）；**P1-3 已完成**（commit `2a1a071`）；**P2-1 已完成**（commit `5225eff`）；**P2-2 已完成**（未 commit）。全部由 `tests/routing/test_global_summary_branch.py` 覆蓋，其餘項目尚未開始。
+> 狀態：**全部完成**。P0-1、P0-2、P1-1、P1-2、P1-3、P2-1、P2-2 已 commit（`8d03bc0`、`59e72f4`、`02a798d`、`ef37efe`、`2a1a071`、`5225eff`、`78121f7`）；**P2-3 已完成**（未 commit）。行為由 `tests/routing/test_global_summary_branch.py` 覆蓋。
 
 ## Context
 
@@ -173,13 +173,24 @@ filter 只排除 `NULL`。`doc.summary or ""`（`:45`）在 `is_not(None)` 之�
 - 只有空白字元的 summary（例如 `"  "`）沒有排除，因為修法只要求排除空字串。`summarizer.py` 的 prompt 要求 summary 以 `Topics:` 行開頭，所以只有空白的 summary 應該很少見，但這只是 LLM 輸出，沒有被保證。
 - 測試新增 1 個：攔截 statement，確認 WHERE 同時有 `summary IS NOT NULL` 和 `summary != ...`（舊程式碼已確認會 fail）。實測 `tests/` 全部 312 passed。
 
-### [ ] P2-3｜Style
+### [x] P2-3｜Style
 
 - `:48` docstring 內容錯誤，括號也沒閉合。改成：「GLOBAL 分支的 node 實作（原名 `lobal_summary_node` 是 typo）。」
 - `:80-86` 是懸空的 string literal，移進 `_map_reduce()` 當 docstring，並在 P0-1 改完後更新呼叫次數的例子。
 - Import 順序改成 stdlib（`asyncio`、`uuid`）→ third-party（`sqlalchemy`）→ local，`TYPE_CHECKING` block 放最後。
 - `:92-95` 多縮排一層，`:44` 有 trailing whitespace，`:57`、`:88` 冒號後面有多餘空白，`:33` 參數的冒號後面少了空白。
 - `_NO_SUMMARIES_MESSAGE` 提到「ingestion pipeline」，這是內部用語，不適合給終端使用者看。改成：「這個知識庫目前沒有已完成處理的文件摘要，請稍後再試，或確認文件已上傳成功。」
+
+#### P2-3 實作結果（2026-10-28，未 commit）
+
+- 行號是 review 當時的版本。之前的項目改過這個檔案，所以實作時是照內容對應，不是照行號。
+- Class docstring 改成建議的文字。`__init__` 的 inline comment 改成兩個空白再接 `#`；`batch_size` 原本的註解「one query with 8 chunks」不正確，改成「summaries per LLM call」。
+- 懸空的 string literal 移進 `_map_reduce()` 當 docstring，並照 P0-1 之後的流程更新：補上 1 份摘要的例子，50 份是 7 次 MAP + 1 次 ANSWER，500 份是 63 + 8 次 MAP + 1 次 ANSWER（共 72 次）。
+- Import 順序改成 stdlib → third-party → local，`TYPE_CHECKING` block 放最後；`import uuid` 移到 stdlib 區。
+- `complete()` 多出的一層縮排已修正，前後也加了空行。`fetch_document_summaries` 的參數補上冒號後面的空白，top-level 定義之間補成兩個空行。trailing whitespace 在之前的改動中已經不見了。
+- `asyncio.gather(...)` 那一行太長，拆成多行；外面的 `list()` 拿掉（`gather` 本來就回傳 list）。
+- `_NO_SUMMARIES_MESSAGE` 改成建議的文字，沒有測試依賴舊的文字。
+- 沒有行為改變。實測 `tests/` 全部 312 passed；`ruff check --select E,W,I,F --line-length 120` 沒有錯誤。
 
 ---
 
