@@ -36,6 +36,10 @@ logger = get_logger(__name__)
 
 _DIALOGUE_TYPES = ("human", "ai")
 
+# resolver / router 只看最近幾則訊息：checkpointer 會累積整個 thread 的歷史，
+# 全部送進 prompt 會讓成本與延遲隨對話長度線性成長。指代消解只需要最近幾輪。
+_PRIOR_TURNS_LIMIT = 6
+
 
 def _dialogue_turns(chat_history: list[BaseMessage]) -> list[BaseMessage]:
     """只保留使用者/助理的對話輪次，餵給 resolver 與 router。
@@ -49,7 +53,7 @@ def _dialogue_turns(chat_history: list[BaseMessage]) -> list[BaseMessage]:
 
 
 def _prior_turns(chat_history: list[BaseMessage]) -> list[BaseMessage]:
-    """這一輪之前的對話輪次。
+    """這一輪之前、最近 `_PRIOR_TURNS_LIMIT` 則對話訊息。
 
     API 建 input 時會把這一輪的問題當成 `HumanMessage` 放進 `chat_history`，
     所以最後一則就是 `state.query` 本身。把它當成 history 會讓 resolver 永遠
@@ -58,7 +62,7 @@ def _prior_turns(chat_history: list[BaseMessage]) -> list[BaseMessage]:
     turns = _dialogue_turns(chat_history)
     if turns and turns[-1].type == "human":
         turns = turns[:-1]
-    return turns
+    return turns[-_PRIOR_TURNS_LIMIT:]
 
 
 def initial_state(

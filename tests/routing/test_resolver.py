@@ -132,3 +132,17 @@ def test_llm_rewriter_uses_llm_factory(monkeypatch):
 
     assert result == "退款政策的第二點是什麼？"
     assert fake.messages is not None
+
+
+def test_history_is_capped_to_recent_turns():
+    rewriter = _RecordingRewriter()
+    node = ResolverNode(resolver=QueryResolver(rewriter=rewriter))
+    history = []
+    for i in range(10):
+        history += [HumanMessage(f"q{i}"), AIMessage(f"a{i}")]
+    history.append(HumanMessage("那第二點呢？"))
+
+    asyncio.run(node(_state(history)))
+
+    (_, passed_history), = rewriter.calls
+    assert [m.content for m in passed_history] == ["q7", "a7", "q8", "a8", "q9", "a9"]
