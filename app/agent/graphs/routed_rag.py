@@ -45,6 +45,19 @@ def _dialogue_turns(chat_history: list[BaseMessage]) -> list[BaseMessage]:
     return [msg for msg in chat_history if msg.type in _DIALOGUE_TYPES]
 
 
+def _prior_turns(chat_history: list[BaseMessage]) -> list[BaseMessage]:
+    """這一輪之前的對話輪次。
+
+    API 建 input 時會把這一輪的問題當成 `HumanMessage` 放進 `chat_history`，
+    所以最後一則就是 `state.query` 本身。把它當成 history 會讓 resolver 永遠
+    以為有對話歷史（第一輪也呼叫 rewrite LLM），而且同一句話在 prompt 裡出現兩次。
+    """
+    turns = _dialogue_turns(chat_history)
+    if turns and turns[-1].type == "human":
+        turns = turns[:-1]
+    return turns
+
+
 def initial_state(
     query: str,
     knowledge_base_id: str,
@@ -74,7 +87,7 @@ class ResolverNode:
         self._resolver = resolver or QueryResolver()
 
     async def __call__(self, state: RoutedAgentState) -> dict:
-        resolved = await self._resolver.resolve(state.query, _dialogue_turns(state.chat_history))
+        resolved = await self._resolver.resolve(state.query, _prior_turns(state.chat_history))
         return {
             "resolved_query": resolved,
             "trace": state.trace + ["resolve: query resolved to standalone question"],
@@ -102,7 +115,7 @@ class RouterNode:
             knowledge_base_id=state.knowledge_base_id,
             resolved_history=[
                 msg.content if isinstance(msg.content, str) else str(msg.content)
-                for msg in _dialogue_turns(state.chat_history)
+                for msg in _prior_turns(state.chat_history)
             ],
         )
         trace = list(state.trace)
