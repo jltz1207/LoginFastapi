@@ -8,7 +8,7 @@
 | Base commit | `8f37bf2` |
 | Sessions | `ec0a432b-1d27-49db-8fe0-b374d0cce51d`<br>`a37ab315-a48b-4f04-ac24-1762b2b336eb`<br>`1c8e0770-0856-4368-8eff-395cfab8ddc4` |
 
-> 狀態：**P0-1、P0-2、P1-1 已完成**（commit `8d03bc0`、`59e72f4`、`02a798d`）；**P1-2 已完成**（未 commit）。全部由 `tests/routing/test_global_summary_branch.py` 覆蓋，其餘項目尚未開始。
+> 狀態：**P0-1、P0-2、P1-1 已完成**（commit `8d03bc0`、`59e72f4`、`02a798d`）；**P1-2 已完成**（commit `ef37efe`）；**P1-3 已完成**（未 commit）。全部由 `tests/routing/test_global_summary_branch.py` 覆蓋，其餘項目尚未開始。
 
 ## Context
 
@@ -115,7 +115,7 @@ LLM 呼叫次數隨文件數線性成長（50 份 → 8 次，500 份 → 72 次
 - **和修法第 2 點不同**：`token_count` 寫入的是**本次 run 的絕對值**，不是 `state.token_count + total`。原因是 `state.py` 的註解規定 budget counter 採 last-write-wins，由 `retrieve_docs` 在每次 run 開始時歸零；GLOBAL 不會經過 `retrieve_docs`，如果用累加，同一個 thread 連續的 GLOBAL 問題會讓 checkpoint 裡的總數一直變大。`tool_calls_count` 不更新，因為 GLOBAL 沒有 tool call。
 - `trace` 新增 `tokens=N`。
 - 測試新增 6 個：截斷與提示、未超過上限時沒有提示、token 累計、失敗的 call 不計入、token 是每次 run 的絕對值、非法的 `max_documents`。實測 `tests/` 全部 306 passed。
-- 注意：P1-3（`ORDER BY`）還沒做，所以截斷時「前 200 份」是哪 200 份目前不固定。
+- 注意：截斷時保留哪 200 份由 P1-3 的 `ORDER BY` 決定（已完成）。
 - 預設值 200 和「截斷」都是暫定，仍待確認（見「待確認決策」第 2 點）。
 
 ### [x] P1-2｜Citation 顯示 UUID 而不是檔名
@@ -134,11 +134,17 @@ LLM 呼叫次數隨文件數線性成長（50 份 → 8 次，500 份 → 72 次
 - 測試新增 2 個：`fetch_document_summaries()` 的 row → `Chunk` 轉換（`source`、`str` 的 `document_id`、`format_citations()` 輸出檔名），以及 LLM 收到的摘要帶有 `[filename]` 標籤。實測 `tests/` 全部 308 passed。
 - 測試環境：這個 checkout 沒有 `.env.dev`，`Settings` 會缺 `DATABASE_URL`、`SECRET_KEY`。從 WSL 跑要用假的值，例如 `DATABASE_URL=... SECRET_KEY=<32+ chars> WSLENV=DATABASE_URL:SECRET_KEY uv.exe run --group dev python -m pytest`。
 
-### [ ] P1-3｜沒有 `ORDER BY`，答案不穩定
+### [x] P1-3｜沒有 `ORDER BY`，答案不穩定
 
 沒有排序時，Postgres 回傳的順序不固定，batch 分組會跟著變，同一個問題可能得到不同答案。截斷時（P1-1）也需要固定順序。
 
 **修法**：`.order_by(Document.created_dt, Document.id)`。
+
+#### P1-3 實作結果（2026-10-28，未 commit）
+
+- `fetch_document_summaries()` 加上 `.order_by(Document.created_dt, Document.id)`。`created_dt` 是 nullable，Postgres `ASC` 預設把 `NULL` 排在最後，`id` 再當 tie-breaker，所以順序仍然是完全固定的。
+- P1-1 的截斷現在固定保留最早建立的 `max_documents` 份。
+- 測試新增 1 個：攔截送進 `execute()` 的 statement，確認 `ORDER BY` 是 `documents.created_dt, documents.id`。實際的 SQL 排序結果仍要靠 DB 整合測試或 dev DB 手動驗證（見「測試計畫」）。實測 `tests/` 全部 309 passed。
 
 ### [ ] P2-1｜`guard_size` 只限制單一 request，不是全域上限
 

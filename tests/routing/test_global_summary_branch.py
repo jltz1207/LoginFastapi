@@ -202,6 +202,26 @@ def test_fetched_summaries_cite_filename_with_str_document_id(monkeypatch):
     assert format_citations(chunks) == "[1] handbook.pdf"
 
 
+def test_fetched_summaries_are_ordered_by_created_dt_then_id(monkeypatch):
+    executed = []
+
+    class _FakeSession:
+        async def execute(self, stmt):
+            executed.append(stmt)
+            return SimpleNamespace(all=lambda: [])
+
+    @asynccontextmanager
+    async def fake_db_ctx():
+        yield _FakeSession()
+
+    monkeypatch.setattr(global_summary, "get_db_ctx", fake_db_ctx)
+    asyncio.run(
+        global_summary.fetch_document_summaries(str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()))
+    )
+    order_by = [str(clause) for clause in executed[0]._order_by_clauses]
+    assert order_by == ["documents.created_dt", "documents.id"]
+
+
 def test_llm_sees_summaries_labelled_with_filename(monkeypatch):
     received: list[str] = []
 

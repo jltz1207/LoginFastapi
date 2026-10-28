@@ -46,6 +46,11 @@ async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id
         Document.status == IngestionStatus.INDEXED,
         Document.deleted_at.is_(None),
         Document.summary.is_not(None)
+    ).order_by(
+        # Fixed order keeps batch grouping (and so the answer) stable, and decides which
+        # documents survive `max_documents` truncation. `id` breaks ties and NULL `created_dt`.
+        Document.created_dt,
+        Document.id,
     )
     async with get_db_ctx() as db:
         all_docs_result = (await db.execute(get_all_docs_stmt)).all()
