@@ -62,7 +62,7 @@ class LLMQueryDecomposer:
             return self._structured_model
         class _DecomposeOutput(BaseModel):
             sub_queries: list[str]
-        base_model = LLMFactory().get_model()
+        base_model = LLMFactory.get_model()
         self._structured_model = base_model.with_structured_output(_DecomposeOutput)
         return self._structured_model
 
@@ -94,7 +94,7 @@ class LLMMultiHopSynthesizer:
             ("system", "根據以下多輪檢索結果，統整回答原始問題。"),
             ("human", f"{context}\n\n原始問題：{query}"),
         ]
-        llm = LLMFactory().get_model()
+        llm = self._model or LLMFactory.get_model()
         response = await llm.ainvoke(messages)
         content = response.content
         return content if isinstance(content, str) else str(content)
