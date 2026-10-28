@@ -24,7 +24,14 @@ import traceback
 router = APIRouter(tags=["Chats"])
 logger = get_logger(__name__)
 # node names whose start we surface to the client as a lightweight status update
-STATUS_NODES = {"retrieve_docs", "grade_docs", "rewrite_question", "web_searcher", "generate", "finalize"}
+STATUS_NODES = {
+    # LOOKUP graph (also the `lookup` branch of the routed graph)
+    "retrieve_docs", "grade_docs", "rewrite_question", "web_searcher", "generate", "finalize",
+    # routed graph
+    "resolve", "route", "global", "metadata", "multi_hop", "no_retrieval", "meta",
+}
+# routed graph: the node that decides the route; its end is surfaced as a `route` event
+ROUTE_NODE = "route"
 # nodes that produce the user-facing answer; `finalize` takes over when the tool budget runs out
 ANSWER_NODES = ("generate", "finalize")
 # routed graph: every branch ends in `respond`, whose output `answer` is the final answer for any route
@@ -87,7 +94,12 @@ async def chat(
                 node_name = event.get("metadata", {}).get("langgraph_node")
 
                 if kind == "on_chain_start" and event["name"] in STATUS_NODES:
-                    yield f"data: {json.dumps({'type': 'status', 'node': event['name']})}\n\n"
+                    yield _sse({"type": "status", "node": event["name"]})
+
+                elif kind == "on_chain_end" and event["name"] == ROUTE_NODE:
+                    route = (event["data"]["output"] or {}).get("route")
+                    if route:
+                        yield _sse({"type": "route", "route": route})
 
                 elif kind == "on_chat_model_stream" and _is_answer_token(event, node_name):
                     chunk_content = event["data"]["chunk"].text

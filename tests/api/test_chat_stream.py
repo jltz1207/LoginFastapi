@@ -244,6 +244,27 @@ def test_token_usage_sums_every_llm_call_of_the_turn(user):
     assert ai.model == "gemini-x"
 
 
+def test_routed_nodes_report_status_and_route(user):
+    graph = FakeGraph(
+        [
+            chain_start("resolve"),
+            chain_start("route"),
+            chain_end("route", {"route": "GLOBAL", "confidence": 0.9}),
+            chain_start("global"),
+            chain_end("respond", {"answer": "a"}),
+        ]
+    )
+
+    events, _ = run_chat(user, graph)
+
+    assert events[:4] == [
+        {"type": "status", "node": "resolve"},
+        {"type": "status", "node": "route"},
+        {"type": "route", "route": "GLOBAL"},
+        {"type": "status", "node": "global"},
+    ]
+
+
 @pytest.mark.parametrize("strategy,state_class", [(2, "LookupAgentState"), (4, "RoutedAgentState")])
 def test_input_state_matches_the_graph_strategy(monkeypatch, user, strategy, state_class):
     from app.agent import dependencies
