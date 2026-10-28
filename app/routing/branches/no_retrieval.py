@@ -29,13 +29,7 @@ class LLMDirectAnswerLLM:
         self._model = model
 
     async def complete(self, query: str) -> str:
-        if self._model is not None:
-            model = self._model
-            response = await model.ainvoke(NO_RETRIEVAL_PROMPT.format_messages(question=query))
-            content = response.content
-            return content if isinstance(content, str) else str(content)
-        factory = LLMFactory()
-        model = factory.get_model()
+        model = self._model or LLMFactory.get_model()
         response = await model.ainvoke(NO_RETRIEVAL_PROMPT.format_messages(question=query))
         content = response.content
         return content if isinstance(content, str) else str(content)

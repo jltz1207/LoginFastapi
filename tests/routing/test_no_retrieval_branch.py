@@ -47,3 +47,15 @@ def test_answers_with_system_prompt_and_no_documents():
     assert [m.type for m in messages] == ["system", "human"]
     assert "法國的首都是哪裡？" in messages[1].content
     assert "knowledge base" in messages[0].content
+
+
+def test_default_model_comes_from_llm_factory(monkeypatch):
+    from app.llm.factory import LLMFactory
+
+    model = _FakeModel()
+    monkeypatch.setattr(LLMFactory, "get_model", classmethod(lambda cls, tools=None: model))
+
+    update = asyncio.run(NoRetrievalBranch(llm=LLMDirectAnswerLLM())(_state()))
+
+    assert update["answer"] == "巴黎。"
+    assert len(model.calls) == 1
