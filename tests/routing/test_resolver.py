@@ -146,3 +146,9 @@ def test_history_is_capped_to_recent_turns():
 
     (_, passed_history), = rewriter.calls
     assert [m.content for m in passed_history] == ["q7", "a7", "q8", "a8", "q9", "a9"]
+
+
+def test_rewrite_prompt_keeps_the_query_language():
+    from app.routing.resolver import _REWRITE_SYSTEM_PROMPT
+
+    assert "相同的語言" in _REWRITE_SYSTEM_PROMPT
