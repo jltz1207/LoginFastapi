@@ -67,7 +67,17 @@ class SemanticCache:
         self._clock = clock
         self._entries: list[_CacheEntry] = []
 
-    async def get(self, query: str, ctx: RouterContext, router_version: str) -> RouteDecision | None:
+    async def embed_query(self, query: str) -> list[float]:
+        """呼叫端在 miss 時把這個 vector 傳給 `put()`，同一個 query 只 embed 一次。"""
+        return (await self._embeddings.embed([query]))[0]
+
+    async def get(
+        self,
+        query: str,
+        ctx: RouterContext,
+        router_version: str,
+        query_vector: list[float] | None = None,
+    ) -> RouteDecision | None:
         cache_key = _tenant_cache_key(ctx)
         now = self._clock()
         candidates = [
@@ -80,7 +90,7 @@ class SemanticCache:
         if not candidates:
             return None
 
-        query_vec = (await self._embeddings.embed([query]))[0]
+        query_vec = query_vector or await self.embed_query(query)
         best_entry = None
         best_score = 0.0
         for entry in candidates:
@@ -94,10 +104,15 @@ class SemanticCache:
         return None
 
     async def put(
-        self, query: str, ctx: RouterContext, router_version: str, decision: RouteDecision
+        self,
+        query: str,
+        ctx: RouterContext,
+        router_version: str,
+        decision: RouteDecision,
+        query_vector: list[float] | None = None,
     ) -> None:
         cache_key = _tenant_cache_key(ctx)
-        query_vec = (await self._embeddings.embed([query]))[0]
+        query_vec = query_vector or await self.embed_query(query)
         # 寫入前先清掉過期項目，再把超過上限的最舊項目丟掉（`_entries` 依寫入時間排序）
         self.purge_expired()
         overflow = len(self._entries) + 1 - self._max_entries

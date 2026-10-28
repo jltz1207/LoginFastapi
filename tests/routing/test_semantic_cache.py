@@ -105,6 +105,22 @@ def test_put_purges_expired_entries():
     assert len(cache._entries) == 1
 
 
+def test_miss_then_put_embeds_the_query_once():
+    embeddings = _Embeddings()
+    cache = SemanticCache(embeddings=embeddings)
+
+    async def run():
+        await cache.put("seed", _CTX_A, "v1", _DECISION)  # so get() has a candidate and must embed
+        embeddings.calls = 0
+        vector = await cache.embed_query("q")
+        assert await cache.get("q", _CTX_A, "v1", query_vector=vector) is None
+        await cache.put("q", _CTX_A, "v1", _DECISION, query_vector=vector)
+        return await cache.get("q", _CTX_A, "v1", query_vector=vector)
+
+    assert asyncio.run(run()) is not None
+    assert embeddings.calls == 1
+
+
 def test_invalid_max_entries():
     with pytest.raises(ValueError):
         SemanticCache(embeddings=_Embeddings(), max_entries=0)
