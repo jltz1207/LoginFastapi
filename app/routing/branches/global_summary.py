@@ -75,18 +75,23 @@ class GlobalSummaryBranch:
     def __init__(
         self,
         batch_size: int = 8, # one query with 8 chunks
-        guard_size: int = 10, # Max: 10 process at the same time
+        guard_size: int = 10, # process-wide cap on concurrent LLM calls, shared by every request
         max_failure_ratio: float = 0.5, # raise when more than this share of a round's map batches fail
         max_documents: int = 200, # caps LLM calls per query; summaries past it are left out
     ):
         if batch_size < 2:
             raise ValueError("batch_size must be at least 2")
+        if guard_size < 1:
+            raise ValueError("guard_size must be at least 1")
         if not 0 <= max_failure_ratio <= 1:
             raise ValueError("max_failure_ratio must be between 0 and 1")
         if max_documents < 1:
             raise ValueError("max_documents must be at least 1")
         self._batch_size = batch_size
-        self._guard_size = guard_size
+        # Created once so concurrent requests on the module-level `global_summary_node` share
+        # it. Safe at import time: asyncio.Semaphore binds to the running loop only on its
+        # first contended acquire, so it must not be shared across event loops after that.
+        self._guard = asyncio.Semaphore(guard_size)
         self._max_failure_ratio = max_failure_ratio
         self._max_documents = max_documents
 
@@ -134,20 +139,18 @@ class GlobalSummaryBranch:
     async def _map_reduce(self, query: str, texts: list[str], knowledge_base_id: str) -> _MapReduceResult:
         if not texts:
             return _MapReduceResult(answer="", failed_batches=0, token_count=0)
-        sem = asyncio.Semaphore(self._guard_size)
         token_count = 0
         async def complete(prompt: ChatPromptTemplate, batch: list[str]) -> str:
                 nonlocal token_count
                 llm = LLMFactory.get_model()
                 messages = prompt.format_messages(query=query, summaries="\n\n".join(batch))
-                response = await llm.ainvoke(messages)
+                # Every LLM call, the final ANSWER included, counts against the shared cap.
+                async with self._guard:
+                    response = await llm.ainvoke(messages)
                 usage = getattr(response, "usage_metadata", None) or {}
                 token_count += usage.get("total_tokens", 0)
                 content = response.content
                 return content if isinstance(content, str) else str(content)
-        async def _guarded(batch: list[str]) -> str:
-            async with sem:
-                return await complete(GLOBAL_SUMMARY_MAP_PROMPT, batch)
         current = texts
         failed_batches = 0
         # Map only while the summaries do not fit one call; the last call always answers
@@ -155,7 +158,7 @@ class GlobalSummaryBranch:
         while len(current) > self._batch_size:
             batches = [current[i : i + self._batch_size] for i in range(0, len(current), self._batch_size)]
             results = list(
-                await asyncio.gather(*(_guarded(batch) for batch in batches), return_exceptions=True)
+                await asyncio.gather(*(complete(GLOBAL_SUMMARY_MAP_PROMPT, batch) for batch in batches), return_exceptions=True)
             )
             current, failures = [], 0
             for batch_index, r in enumerate(results):

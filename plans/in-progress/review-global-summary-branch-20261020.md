@@ -8,7 +8,7 @@
 | Base commit | `8f37bf2` |
 | Sessions | `ec0a432b-1d27-49db-8fe0-b374d0cce51d`<br>`a37ab315-a48b-4f04-ac24-1762b2b336eb`<br>`1c8e0770-0856-4368-8eff-395cfab8ddc4` |
 
-> 狀態：**P0-1、P0-2、P1-1 已完成**（commit `8d03bc0`、`59e72f4`、`02a798d`）；**P1-2 已完成**（commit `ef37efe`）；**P1-3 已完成**（未 commit）。全部由 `tests/routing/test_global_summary_branch.py` 覆蓋，其餘項目尚未開始。
+> 狀態：**P0-1、P0-2、P1-1 已完成**（commit `8d03bc0`、`59e72f4`、`02a798d`）；**P1-2 已完成**（commit `ef37efe`）；**P1-3 已完成**（commit `2a1a071`）；**P2-1 已完成**（未 commit）。全部由 `tests/routing/test_global_summary_branch.py` 覆蓋，其餘項目尚未開始。
 
 ## Context
 
@@ -146,12 +146,20 @@ LLM 呼叫次數隨文件數線性成長（50 份 → 8 次，500 份 → 72 次
 - P1-1 的截斷現在固定保留最早建立的 `max_documents` 份。
 - 測試新增 1 個：攔截送進 `execute()` 的 statement，確認 `ORDER BY` 是 `documents.created_dt, documents.id`。實際的 SQL 排序結果仍要靠 DB 整合測試或 dev DB 手動驗證（見「測試計畫」）。實測 `tests/` 全部 309 passed。
 
-### [ ] P2-1｜`guard_size` 只限制單一 request，不是全域上限
+### [x] P2-1｜`guard_size` 只限制單一 request，不是全域上限
 
 `asyncio.Semaphore` 在每次 `_map_reduce()` 裡新建，而 `global_summary_node` 是 module-level 共用 instance。多個 request 同時進來時，總並發數是 `10 × N`，和註解「Max: 10 process at the same time」不符。
 
 **修法**：把 semaphore 建在 `__init__`，讓所有 request 共用；註解改成「整個 process 的上限」。
 注意：semaphore 要在 event loop 裡建立。Python 3.10+ 的 `asyncio.Semaphore` 第一次使用時才綁定 loop，所以在 module import 時建立沒問題（推論，實作時要測）。
+
+#### P2-1 實作結果（2026-10-28，未 commit）
+
+- `__init__` 建立 `self._guard = asyncio.Semaphore(guard_size)`，所有 request 共用；`guard_size < 1` 時 raise `ValueError`。`self._guard_size` 拿掉。
+- Loop 綁定已確認：Python 3.12 的 `Semaphore.acquire()` 只有在需要等待時才呼叫 `_get_loop()`，所以在 module import 時建立沒問題。限制是：一旦被綁定到某個 event loop，就不能再拿到別的 loop 使用。uvicorn 只有一個 loop，所以沒有影響。
+- **和修法不同**：semaphore 移進 `complete()`，最後的 ANSWER call 也算在上限內，不只 MAP。原本 ANSWER call 不受限制，所以「整個 process 的上限」不成立。只包住 `llm.ainvoke()`，`format_messages` 不佔名額。
+- `_guarded()` 只剩轉呼叫，已經 inline 掉。
+- 測試新增 2 個：同一個 instance 同時跑兩個 request（`batch_size=4`、`guard_size=6`，每個 request 第一輪有 10 個 batch），觀察到的 peak 並發數是 6（舊程式碼是 12，已確認會 fail），以及非法的 `guard_size`。實測 `tests/` 全部 311 passed。
 
 ### [ ] P2-2｜空字串 summary 也會送進 LLM
 

@@ -181,6 +181,42 @@ def test_invalid_max_documents_rejected():
         GlobalSummaryBranch(max_documents=0)
 
 
+def test_guard_size_caps_concurrency_across_requests(monkeypatch):
+    in_flight = peak = 0
+
+    class _SlowLLM:
+        async def ainvoke(self, messages):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return AIMessage(content="partial", usage_metadata=_USAGE)
+
+    async def fake_fetch(tenant_id, user_id, knowledge_base_id):
+        return [Chunk(chunk_id=f"d-{i}", content=f"summary {i}") for i in range(40)]
+
+    monkeypatch.setattr(global_summary.LLMFactory, "get_model", lambda *a, **kw: _SlowLLM())
+    monkeypatch.setattr(global_summary, "fetch_document_summaries", fake_fetch)
+    state = RoutedAgentState(
+        user_id="u-1", tenant_id="t-1", knowledge_base_id="kb-1", query="Q?", resolved_query="Q?"
+    )
+    # One shared instance, as with the module-level `global_summary_node`. Each request
+    # alone fires 10 map batches at once, so a per-request semaphore would reach 6 + 6.
+    branch = GlobalSummaryBranch(batch_size=4, guard_size=6)
+
+    async def two_requests():
+        await asyncio.gather(branch(state), branch(state))
+
+    asyncio.run(two_requests())
+    assert peak == 6
+
+
+def test_invalid_guard_size_is_rejected():
+    with pytest.raises(ValueError):
+        GlobalSummaryBranch(guard_size=0)
+
+
 def test_fetched_summaries_cite_filename_with_str_document_id(monkeypatch):
     doc_id = uuid.uuid4()
     rows = [SimpleNamespace(id=doc_id, filename="handbook.pdf", summary="Topics: onboarding")]
