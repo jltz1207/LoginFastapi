@@ -9,10 +9,13 @@ router 判定結果與投機路徑一致就直接沿用投機結果，不同就*
 永遠對應「router 真正判定的路徑」，投機執行只是用來省時間，不會讓答案跟著
 投機路徑跑掉（開發約定：不得因為「已經跑出來了」就將就使用不同路徑的結果）。
 
-還沒接進 `routing/graph.py` 的 `StateGraph`（那需要把 `RouterNode`/`select_branch`
-的節點結構整個改掉，是更大的架構調整，超出這個元件本身的範圍）。這裡先把元件
-本身做完整、做對、做好測試；未來要接的話，`dispatch` 參數可以用
-`graph._ROUTE_TO_NODE` 對照表 + 對應的 leaf node 組出來。
+**Experimental，還沒接進 graph**（`app/agent/graphs/routed_rag.py`）：接上去需要把
+`RouterNode`/`select_branch` 的節點結構整個改掉，是更大的架構調整。未來要接的話：
+
+- `dispatch` 可以用 `routed_rag._ROUTE_TO_NODE` 對照表 + 對應的 leaf node 組出來。
+- `dispatch` 必須沒有副作用：投機結果被丟棄時，它不能已經寫進 graph state 或
+  checkpoint。LOOKUP subgraph 會寫 `chat_history`，所以不能直接把 compiled subgraph
+  當 `dispatch` 跑；要嘛只投機它的檢索步驟，要嘛 dispatch 回傳的 update 由呼叫端決定要不要套用。
 """
 
 from __future__ import annotations
