@@ -9,8 +9,6 @@ fallback chain）、M4（六個 leaf branch）接成一張完整的圖。
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-
 from app.agent.graphs.base import BaseGraphFactory
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.graph import END, START, StateGraph
@@ -212,21 +210,3 @@ class RoutedGraphFactory(BaseGraphFactory):
             g.add_edge(leaf, END)
 
         return g.compile()
-
-
-# def compile_app(*, checkpointer=None, **build_graph_kwargs):
-#     """不需要落地存檔時用這個（測試、一次性呼叫）。`checkpointer=None` 就是不持久化。"""
-#     return build_graph(**build_graph_kwargs).compile(checkpointer=checkpointer)
-
-
-# @asynccontextmanager
-# async def graph_app(db_path: str = "checkpoints.sqlite", **build_graph_kwargs):
-#     """生產用法：`async with graph_app() as app: await app.ainvoke(state, config=...)`。
-
-#     `AsyncSqliteSaver.from_conn_string()` 本身是 async context manager，沒辦法在
-#     模組載入時就同步組出一個裸的 `checkpointer` 變數（這正是舊版 stub 的 bug）。
-#     """
-#     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-
-#     async with AsyncSqliteSaver.from_conn_string(db_path) as checkpointer:
-#         yield build_graph(**build_graph_kwargs).compile(checkpointer=checkpointer)
