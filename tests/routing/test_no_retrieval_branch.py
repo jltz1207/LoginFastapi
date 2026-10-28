@@ -59,3 +59,12 @@ def test_default_model_comes_from_llm_factory(monkeypatch):
 
     assert update["answer"] == "巴黎。"
     assert len(model.calls) == 1
+
+
+def test_token_count_is_this_runs_usage():
+    branch = NoRetrievalBranch(llm=LLMDirectAnswerLLM(model=_FakeModel(total_tokens=42)))
+    state = _state().model_copy(update={"token_count": 999})
+
+    update = asyncio.run(branch(state))
+
+    assert update["token_count"] == 42

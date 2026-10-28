@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from app.llm.factory import LLMFactory
@@ -20,19 +21,29 @@ if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `age
 ROUTER_VERSION = "no-retrieval-v2"
 
 
+@dataclass
+class DirectAnswer:
+    answer: str
+    token_count: int = 0
+
+
 class DirectAnswerLLM(Protocol):
-    async def complete(self, query: str) -> str: ...
+    async def complete(self, query: str) -> DirectAnswer: ...
 
 
 class LLMDirectAnswerLLM:
     def __init__(self, model=None):
         self._model = model
 
-    async def complete(self, query: str) -> str:
+    async def complete(self, query: str) -> DirectAnswer:
         model = self._model or LLMFactory.get_model()
         response = await model.ainvoke(NO_RETRIEVAL_PROMPT.format_messages(question=query))
         content = response.content
-        return content if isinstance(content, str) else str(content)
+        usage = getattr(response, "usage_metadata", None) or {}
+        return DirectAnswer(
+            answer=content if isinstance(content, str) else str(content),
+            token_count=usage.get("total_tokens", 0),
+        )
 
 
 class NoRetrievalBranch:
@@ -43,10 +54,12 @@ class NoRetrievalBranch:
 
     async def __call__(self, state: RoutedAgentState) -> dict:
         query = state.resolved_query
-        answer = await self._llm.complete(query)
+        result = await self._llm.complete(query)
+        # 本次 run 的絕對值（budget counter 是 last-write-wins，見 `app/agent/state.py`）
         return {
-            "answer": answer,
+            "answer": result.answer,
             "documents": [],
+            "token_count": result.token_count,
             "trace": state.trace + ["no_retrieval: zero-retrieval direct answer"],
         }
 
