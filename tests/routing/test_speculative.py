@@ -77,3 +77,32 @@ def test_miss_cancels_speculation_instead_of_waiting_for_it():
     assert not result.speculation_hit
     assert result.branch_result == {"route": Route.GLOBAL.value}
     assert result.total_latency_seconds < 1.0
+
+
+def test_router_failure_cancels_speculation():
+    dispatch = _Dispatch(lookup_seconds=5.0)
+    executor = SpeculativeExecutor(
+        router=_Router(Route.GLOBAL, delay=0.01, error=RuntimeError("router down")), dispatch=dispatch
+    )
+
+    async def run():
+        with pytest.raises(RuntimeError, match="router down"):
+            await executor.run("q", _CTX, _state())
+        assert dispatch.cancelled == [Route.LOOKUP.value]
+
+    asyncio.run(run())
+
+
+def test_cancelling_run_cancels_both_tasks():
+    dispatch = _Dispatch(lookup_seconds=5.0)
+    executor = SpeculativeExecutor(router=_Router(Route.GLOBAL, delay=5.0), dispatch=dispatch)
+
+    async def run():
+        task = asyncio.create_task(executor.run("q", _CTX, _state()))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert dispatch.cancelled == [Route.LOOKUP.value]
+
+    asyncio.run(run())

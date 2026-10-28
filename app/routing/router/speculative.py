@@ -96,22 +96,27 @@ class SpeculativeExecutor:
             self._timed(self._dispatch(self._speculative_route.value, state))
         )
 
-        # 先等 router：沒命中時要立刻取消投機任務，不能等它跑完才重跑真正的路徑，
-        # 否則總延遲 = max(router, 投機路徑) + 真正路徑，比不投機還慢。
-        decision, router_latency = await router_task
+        try:
+            # 先等 router：沒命中時要立刻取消投機任務，不能等它跑完才重跑真正的路徑，
+            # 否則總延遲 = max(router, 投機路徑) + 真正路徑，比不投機還慢。
+            decision, router_latency = await router_task
 
-        # 與 RouterNode 一致：只看 accepted，不拿 confidence 比門檻（否則 LLM 層的決定會被否決）
-        actual_route = decision.route if decision.accepted else DEFAULT_ROUTE
+            # 與 RouterNode 一致：只看 accepted，不拿 confidence 比門檻（否則 LLM 層的決定會被否決）
+            actual_route = decision.route if decision.accepted else DEFAULT_ROUTE
 
-        if actual_route == self._speculative_route:
-            branch_result, speculative_latency = await speculative_task
-            speculation_hit = True
-        else:
-            # 投機結果的 route 跟真正判定的不一樣：確實丟棄，絕不回傳給下游。
+            if actual_route == self._speculative_route:
+                branch_result, speculative_latency = await speculative_task
+                speculation_hit = True
+            else:
+                # 投機結果的 route 跟真正判定的不一樣：確實丟棄，絕不回傳給下游。
+                await _cancel(speculative_task)
+                speculative_latency = self._clock() - start
+                branch_result = await self._dispatch(actual_route.value, state)
+                speculation_hit = False
+        finally:
+            # router 丟例外、或 run() 本身被取消時，兩個 task 都不能留在背景繼續跑
+            await _cancel(router_task)
             await _cancel(speculative_task)
-            speculative_latency = self._clock() - start
-            branch_result = await self._dispatch(actual_route.value, state)
-            speculation_hit = False
 
         return SpeculativeResult(
             decision=decision,
