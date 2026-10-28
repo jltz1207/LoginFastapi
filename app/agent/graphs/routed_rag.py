@@ -1,8 +1,10 @@
 """LangGraph StateGraph 組裝：把 M1（resolver/taxonomy）、M2/M3（router cascade +
 fallback chain）、M4（六個 leaf branch）接成一張完整的圖。
 
-    START → resolve → route ─┬→ lookup / global / metadata / multi_hop / no_retrieval / meta → END
+    START → resolve → route ─┬→ lookup / global / metadata / multi_hop / no_retrieval / meta → respond → END
                              └ router 沒有 accepted 的決策一律改走 lookup（RouterNode）
+
+`respond` 讓每個 route 的答案都同時出現在 `answer` 與 `chat_history`（見 `respond_node`）。
 
 `RoutedGraphFactory.build()` 的每個節點都可注入假物件，測試不需要真的打 Gemini/Chroma/PostgreSQL。
 """
@@ -23,7 +25,7 @@ from app.routing.branches.meta import meta_node
 from app.routing.branches.metadata import metadata_query_node
 from app.routing.branches.multi_hop import agentic_subgraph
 from app.routing.branches.no_retrieval import no_retrieval_node
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage
 
 from app.routing.resolver import QueryResolver
 from app.routing.router.base import BaseRouter
@@ -174,6 +176,34 @@ def select_branch(state: RoutedAgentState) -> str:
     """
     return _ROUTE_TO_NODE.get(state.route, _ROUTE_TO_NODE[DEFAULT_ROUTE.value])
 
+
+_LEAVES = tuple(_ROUTE_TO_NODE.values())
+
+
+async def respond_node(state: RoutedAgentState) -> dict:
+    """所有 leaf 共用的出口：讓每個 route 的答案都同時出現在 `answer` 和 `chat_history`。
+
+    - LOOKUP subgraph 把答案寫在 `chat_history` 最後一則 `AIMessage`，`answer` 是空的。
+    - 其他分支只寫 `answer`，沒有 `AIMessage`，下一輪的 resolver 會看不到助理的回答。
+
+    API 只讀這個節點的輸出，不需要知道每個分支把答案放在哪裡。
+    """
+    if select_branch(state) == _ROUTE_TO_NODE[Route.LOOKUP.value]:
+        last = state.chat_history[-1] if state.chat_history else None
+        update = {"answer": last.text if isinstance(last, AIMessage) else ""}
+    else:
+        update = {"chat_history": [AIMessage(content=state.answer)]}
+
+    # trace 不回給使用者（見 `branches/meta.py`），在這裡記進 log 供除錯
+    logger.info(
+        "routed_rag.completed",
+        route=state.route or DEFAULT_ROUTE.value,
+        confidence=state.confidence,
+        trace=state.trace,
+    )
+    return update
+
+
 class RoutedGraphFactory(BaseGraphFactory):
     @staticmethod
     def build(
@@ -205,11 +235,13 @@ class RoutedGraphFactory(BaseGraphFactory):
         g.add_node("multi_hop", multi_hop or agentic_subgraph)
         g.add_node("no_retrieval", no_retrieval or no_retrieval_node)
         g.add_node("meta", meta or meta_node)
+        g.add_node("respond", respond_node)
 
         g.add_edge(START, "resolve")
         g.add_edge("resolve", "route")
         g.add_conditional_edges("route", select_branch)
-        for leaf in ("lookup", "global", "metadata", "multi_hop", "no_retrieval", "meta"):
-            g.add_edge(leaf, END)
+        for leaf in _LEAVES:
+            g.add_edge(leaf, "respond")
+        g.add_edge("respond", END)
 
         return g.compile(checkpointer=checkpointer)

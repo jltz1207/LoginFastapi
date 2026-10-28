@@ -92,3 +92,36 @@ def test_second_turn_sees_the_first_turn():
     # Turn 1 has no history, so the rewriter only runs on turn 2.
     (history,) = rewriter.histories
     assert [m.content for m in history] == ["退款政策有哪幾點？", "lookup answer to 退款政策有哪幾點？"]
+
+
+@pytest.mark.parametrize(
+    "route,expected",
+    [
+        (Route.LOOKUP, "lookup answer to q"),
+        (Route.GLOBAL, "global answer to q"),
+        (Route.METADATA, "metadata answer to q"),
+        (Route.MULTI_HOP, "multi_hop answer to q"),
+        (Route.NO_RETRIEVAL, "no_retrieval answer to q"),
+        (Route.META, "meta answer to q"),
+    ],
+)
+def test_every_route_answers_in_answer_and_chat_history(route, expected):
+    result = asyncio.run(_graph(route).ainvoke(_input("q"), _CONFIG))
+
+    assert result["route"] == route.value
+    assert result["answer"] == expected
+    assert [(m.type, m.content) for m in result["chat_history"]] == [("human", "q"), ("ai", expected)]
+
+
+def test_non_lookup_answer_reaches_the_next_turns_resolver():
+    rewriter = _RecordingRewriter()
+    graph = _graph(Route.GLOBAL, rewriter=rewriter)
+
+    async def run():
+        await graph.ainvoke(_input("這些文件在講什麼？"), _CONFIG)
+        await graph.ainvoke(_input("再詳細一點"), _CONFIG)
+
+    asyncio.run(run())
+
+    (history,) = rewriter.histories
+    assert [m.content for m in history] == ["這些文件在講什麼？", "global answer to 這些文件在講什麼？"]
