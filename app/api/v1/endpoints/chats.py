@@ -84,8 +84,9 @@ async def chat(
             print(f"Exception Details: {e}")
             print(traceback.format_exc())  # Prints file paths, line numbers, and call stack
         # stream finished — persist both turns now that we have the full answer
+        # `documents` are `Chunk`s (app/agent/state.py): the text is `content`, not langchain's `page_content`
         formatted_source_str = "\n".join(
-            f"Document {doc_number}: " + doc.page_content for doc_number, doc in enumerate(documents, start=1)
+            f"Document {doc_number}: " + doc.content for doc_number, doc in enumerate(documents, start=1)
         )
 
         get_max_seq_num = select(func.max(AsistantMessage.sequence_number)).where(
