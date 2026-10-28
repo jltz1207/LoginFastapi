@@ -30,6 +30,9 @@ SEMANTIC_CACHE_THRESHOLD = 0.92
 
 DEFAULT_TTL_SECONDS = 3600.0
 
+DEFAULT_MAX_ENTRIES = 1024
+"""整個 cache（所有租戶合計）的項目上限，超過時丟掉最舊的項目。"""
+
 
 class _CacheEntry:
     __slots__ = ("cache_key", "vector", "decision", "router_version", "created_at")
@@ -52,11 +55,15 @@ class SemanticCache:
         embeddings: EmbeddingsClient | None = None,
         threshold: float = SEMANTIC_CACHE_THRESHOLD,
         ttl_seconds: float = DEFAULT_TTL_SECONDS,
+        max_entries: int = DEFAULT_MAX_ENTRIES,
         clock=time.monotonic,
     ):
+        if max_entries < 1:
+            raise ValueError("max_entries must be >= 1")
         self._embeddings = embeddings or FactoryEmbeddingsClient()
         self._threshold = threshold
         self._ttl_seconds = ttl_seconds
+        self._max_entries = max_entries
         self._clock = clock
         self._entries: list[_CacheEntry] = []
 
@@ -91,6 +98,11 @@ class SemanticCache:
     ) -> None:
         cache_key = _tenant_cache_key(ctx)
         query_vec = (await self._embeddings.embed([query]))[0]
+        # 寫入前先清掉過期項目，再把超過上限的最舊項目丟掉（`_entries` 依寫入時間排序）
+        self.purge_expired()
+        overflow = len(self._entries) + 1 - self._max_entries
+        if overflow > 0:
+            del self._entries[:overflow]
         self._entries.append(
             _CacheEntry(
                 cache_key=cache_key,
@@ -102,10 +114,7 @@ class SemanticCache:
         )
 
     def purge_expired(self) -> int:
-        """手動觸發清掉過期項目，回傳清掉的筆數。記憶體內快取沒有背景清理程序時
-        可以定期呼叫；`get()`/`put()` 本身已經會過濾掉過期項目，這個方法只是
-        避免 `_entries` 無限增長。
-        """
+        """清掉過期項目，回傳清掉的筆數。`put()` 每次寫入前都會呼叫。"""
         now = self._clock()
         before = len(self._entries)
         self._entries = [e for e in self._entries if (now - e.created_at) <= self._ttl_seconds]
