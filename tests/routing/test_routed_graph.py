@@ -126,6 +126,38 @@ def test_thread_previously_run_by_the_lookup_graph_is_readable():
     assert [m.content for m in history] == ["舊問題", "old answer"]
 
 
+def test_thread_previously_run_by_the_routed_graph_is_readable_by_lookup():
+    """Kill switch: GRAPH_STRATEGY 4 → 2 on a thread that has RoutedAgentState channels."""
+    from langgraph.graph import END, START, StateGraph
+
+    from app.agent.state import LookupAgentState
+
+    seen: list[list[str]] = []
+
+    async def old_generate(state):
+        seen.append([m.content for m in state.chat_history])
+        return {"chat_history": [AIMessage("lookup answer")]}
+
+    lookup_only = StateGraph(LookupAgentState)
+    lookup_only.add_node("generate", old_generate)
+    lookup_only.add_edge(START, "generate")
+    lookup_only.add_edge("generate", END)
+
+    saver = InMemorySaver()
+    lookup_input = LookupAgentState(
+        query="第二題", tenant_id="t-1", user_id="u-1", knowledge_base_id="kb-1",
+        chat_history=[HumanMessage("第二題")],
+    )
+
+    async def run():
+        await _graph(Route.GLOBAL, checkpointer=saver).ainvoke(_input("第一題"), _CONFIG)
+        await lookup_only.compile(checkpointer=saver).ainvoke(lookup_input, _CONFIG)
+
+    asyncio.run(run())
+
+    assert seen == [["第一題", "global answer to 第一題", "第二題"]]
+
+
 @pytest.mark.parametrize(
     "route,expected",
     [
