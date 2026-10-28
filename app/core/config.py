@@ -50,7 +50,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
     TAVILY_API_KEY: str = ""
-    GRAPH_STRATEGY: int = 2  # Default: GraphStrategy.SEARCH
+    # Default: GraphStrategy.ROUTED (query router + six branches). Set 2 (SEARCH, LOOKUP only)
+    # as a kill switch; both strategies share the same thread_id and checkpoints.
+    GRAPH_STRATEGY: int = 4
 
     # Ingestion worker (app/ingestion/). Runs inside the API process, see app/main.py.
     INGESTION_WORKER_ENABLED: bool = True
