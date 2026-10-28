@@ -37,7 +37,7 @@ EMBEDDING_PROVIDE_TYPE=GEMINI
 EMBEDDING_MODEL=gemini-embedding-001
 COLLECTION_NAME=user_knowledge_base
 PARTITION_METHOD=3                 # 1=global collection, 2=one-per-user, 3=one-per-tenant
-GRAPH_STRATEGY=2                   # selects which LangGraph to compile
+GRAPH_STRATEGY=4                   # 4=ROUTED (default), 2=SEARCH (LOOKUP only, kill switch)
 TAVILY_API_KEY=...
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_API_KEY=...
@@ -62,18 +62,33 @@ Auth endpoints (`POST /api/v1/users/register`, `POST /api/v1/users/login`) are t
 
 ### LangGraph Agent (`app/agent/`)
 
-The agent is a compiled `StateGraph` built at request time via `get_compiled_graph()` in `app/agent/dependencies.py`. The graph variant is selected by `GRAPH_STRATEGY`.
+The agent is a compiled `StateGraph` built at request time via `get_compiled_graph()` in `app/agent/dependencies.py`. The graph variant is selected by `GRAPH_STRATEGY`; `build_initial_state()` in the same file builds the matching input state, so `POST /chat` never imports a state class.
 
-**Currently implemented — `SearchingRagGraphFactory` (strategy 2):**
+**`RoutedGraphFactory` (strategy 4, default) — `app/agent/graphs/routed_rag.py`:**
+```
+START → resolve → route ─┬→ lookup / global / metadata / multi_hop / no_retrieval / meta → respond → END
+                         └ a decision that is not accepted falls back to lookup
+```
+
+- `resolve`: `QueryResolver` (`app/routing/resolver.py`) rewrites a follow-up into a standalone question from the last 6 human/ai messages before this turn. No history → no LLM call. A rewrite failure falls back to the original query.
+- `route`: `CascadeRouter` (rule → embedding → LLM, `app/routing/router/`). If it raises, `FallbackChainRouter` runs. Routers are process-wide singletons (`router/defaults.py`).
+- Branches live in `app/routing/branches/`. `lookup` is the strategy 2 graph below, used as a subgraph. Every branch must call `enforce_knowledge_base_id()` for tenant scope and never trust `state.filters`.
+- `respond`: every route ends here. It puts the answer in both `answer` and `chat_history`, so the next turn's resolver sees it, and logs `route` / `confidence` / `trace`. `trace` is never sent to the user.
+- The checkpointer is attached to the parent graph only; the `lookup` subgraph inherits it.
+- `router/speculative.py` and `cache/semantic_cache.py` are experimental and not wired into the graph.
+
+**SSE contract (`app/api/v1/endpoints/chats.py`):** tokens come from LOOKUP's `generate` / `finalize` nodes, or from any LLM call tagged `FINAL_ANSWER_TAG` (`app/routing/branches/common.py`). A branch must tag only the call that produces the user-facing answer (`ainvoke(..., config={"tags": [FINAL_ANSWER_TAG]})`), never decompose / map calls. Branches without an LLM (META, METADATA) are sent in one piece from `respond`'s `answer`. Stored token counts sum every LLM call of the turn.
+
+**`LookupRagGraphFactory` (strategy 2) — `app/agent/graphs/lookup_rag.py`:**
 ```
 START → retrieve_docs → grade_docs
                               ↓ grade > 5 → generate → END
                               ↓ grade ≤ 5 → rewrite_question → web_searcher → grade_docs (loop)
 ```
 
-- `AgentState` (Pydantic `BaseModel`) carries `user_id`, `knowledge_base_id`, `question`, `chat_messages`, `documents`, `grade`, and `loop_count` through the graph.
+- State is `LookupAgentState` / `RoutedAgentState` (`app/agent/state.py`, Pydantic). An input built from the model overwrites every non-reducer field in the checkpoint, so `trace`, `route`, `documents` and the budget counters start fresh each turn; only `chat_history` (`add_messages`) accumulates.
 - The checkpointer is `AsyncPostgresSaver` (Postgres-backed), initialized at app startup in `checkpointer_lifespan` and accessed via `get_checkpointer()`. Thread ID for conversation continuity is `"{user_id}::{knowledge_base_id}"`.
-- `LLMFactory.get_model()` constructs a new LLM instance on every call from `settings`.
+- `LLMFactory.get_model()` returns a cached model (primary + two fallbacks via `with_fallbacks`) built from `settings`. Every LLM call in `app/agent/` and `app/routing/` goes through it.
 
 ### RAG Pipeline (`app/rag/`)
 
