@@ -35,6 +35,17 @@ ROUTER_VERSION = "speculative-v2"
 Dispatch = Callable[[str, "RoutedAgentState"], Awaitable[dict]]
 
 
+async def _cancel(task: asyncio.Task) -> None:
+    """取消並等它真的結束，不留下還在背景跑的 task。"""
+    if task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
 @dataclass
 class SpeculativeResult:
     decision: RouteDecision
@@ -44,6 +55,7 @@ class SpeculativeResult:
     False：投機結果已被丟棄，`branch_result` 是重新執行『router 真正判定路徑』的結果。"""
     router_latency_seconds: float
     speculative_latency_seconds: float
+    """命中時是投機路徑的執行時間；沒命中時是被取消前跑了多久。"""
     total_latency_seconds: float
 
     @property
@@ -84,18 +96,20 @@ class SpeculativeExecutor:
             self._timed(self._dispatch(self._speculative_route.value, state))
         )
 
-        (decision, router_latency), (speculative_result, speculative_latency) = await asyncio.gather(
-            router_task, speculative_task
-        )
+        # 先等 router：沒命中時要立刻取消投機任務，不能等它跑完才重跑真正的路徑，
+        # 否則總延遲 = max(router, 投機路徑) + 真正路徑，比不投機還慢。
+        decision, router_latency = await router_task
 
         # 與 RouterNode 一致：只看 accepted，不拿 confidence 比門檻（否則 LLM 層的決定會被否決）
         actual_route = decision.route if decision.accepted else DEFAULT_ROUTE
 
         if actual_route == self._speculative_route:
-            branch_result = speculative_result
+            branch_result, speculative_latency = await speculative_task
             speculation_hit = True
         else:
             # 投機結果的 route 跟真正判定的不一樣：確實丟棄，絕不回傳給下游。
+            await _cancel(speculative_task)
+            speculative_latency = self._clock() - start
             branch_result = await self._dispatch(actual_route.value, state)
             speculation_hit = False
 
