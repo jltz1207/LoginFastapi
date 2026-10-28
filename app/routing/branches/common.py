@@ -13,7 +13,12 @@ from typing import TYPE_CHECKING
 # Chunk is re-exported: global_summary.py and agent/nodes/retrieval.py import it from here.
 from app.agent.state import Chunk, RoutedAgentState
 
-__all__ = ["Chunk", "enforce_knowledge_base_id", "format_citations"]
+__all__ = ["Chunk", "FINAL_ANSWER_TAG", "enforce_knowledge_base_id", "format_citations"]
+
+# 產生「使用者看到的最終答案」的那一次 LLM 呼叫要帶這個 tag（`ainvoke(..., config={"tags": [...]})`）。
+# 同一個 node 裡可能還有其他 LLM 呼叫（MULTI_HOP 的 decompose、GLOBAL 的 MAP），
+# `POST /chat` 的 SSE 只串流帶這個 tag 的 token。
+FINAL_ANSWER_TAG = "final_answer"
 
 
 def enforce_knowledge_base_id(state: RoutedAgentState) -> str:

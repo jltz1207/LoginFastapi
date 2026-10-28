@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from app.llm.factory import LLMFactory
 from app.rag.prompts import NO_RETRIEVAL_PROMPT
+from app.routing.branches.common import FINAL_ANSWER_TAG
 
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
@@ -37,7 +38,9 @@ class LLMDirectAnswerLLM:
 
     async def complete(self, query: str) -> DirectAnswer:
         model = self._model or LLMFactory.get_model()
-        response = await model.ainvoke(NO_RETRIEVAL_PROMPT.format_messages(question=query))
+        response = await model.ainvoke(
+            NO_RETRIEVAL_PROMPT.format_messages(question=query), config={"tags": [FINAL_ANSWER_TAG]}
+        )
         content = response.content
         usage = getattr(response, "usage_metadata", None) or {}
         return DirectAnswer(

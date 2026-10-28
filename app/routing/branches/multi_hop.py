@@ -30,7 +30,7 @@ from pydantic import BaseModel
 from app.rag.prompts import MULTI_HOP_DECOMPOSE_PROMPT
 from app.rag.reranker.reranker import with_rerank
 from app.rag.retriever.hybrid_retriever import HybridRetriever
-from app.routing.branches.common import enforce_knowledge_base_id
+from app.routing.branches.common import FINAL_ANSWER_TAG, enforce_knowledge_base_id
 from app.agent.state import Chunk
 
 if TYPE_CHECKING:  # annotation only; `Chunk` above is already a runtime import from `agent`
@@ -117,7 +117,7 @@ class LLMMultiHopSynthesizer:
             ("human", f"{context}\n\n原始問題：{query}"),
         ]
         llm = self._model or LLMFactory.get_model()
-        response = await llm.ainvoke(messages)
+        response = await llm.ainvoke(messages, config={"tags": [FINAL_ANSWER_TAG]})
         content = response.content
         return content if isinstance(content, str) else str(content)
 

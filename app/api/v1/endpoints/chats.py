@@ -13,6 +13,7 @@ from app.core.logging import get_logger
 from app.db.session import get_db
 from app.models.asistantMessage import AsistantMessage, RoleEnum
 from app.models.user import User
+from app.routing.branches.common import FINAL_ANSWER_TAG
 from app.schemas.chats import ChatRequestModel
 from app.services.jwtService import getCurrentUser
 from app.services.knowledgeBaseService import get_owned_knowledge_base
@@ -26,6 +27,18 @@ logger = get_logger(__name__)
 STATUS_NODES = {"retrieve_docs", "grade_docs", "rewrite_question", "web_searcher", "generate", "finalize"}
 # nodes that produce the user-facing answer; `finalize` takes over when the tool budget runs out
 ANSWER_NODES = ("generate", "finalize")
+# routed graph: every branch ends in `respond`, whose output `answer` is the final answer for any route
+RESPOND_NODE = "respond"
+
+
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def _is_answer_token(event: dict, node_name: str | None) -> bool:
+    """LOOKUP streams from its answer nodes; routed branches tag their final-answer LLM call
+    (MULTI_HOP decompose / GLOBAL map calls run in the same node and must not be streamed)."""
+    return node_name in ANSWER_NODES or FINAL_ANSWER_TAG in event.get("tags", [])
 
 
 @router.post("/chat")
@@ -59,11 +72,19 @@ async def chat(
                 if kind == "on_chain_start" and event["name"] in STATUS_NODES:
                     yield f"data: {json.dumps({'type': 'status', 'node': event['name']})}\n\n"
 
-                elif kind == "on_chat_model_stream" and node_name in ANSWER_NODES:
+                elif kind == "on_chat_model_stream" and _is_answer_token(event, node_name):
                     chunk_content = event["data"]["chunk"].text
                     if chunk_content:
                         full_answer += chunk_content
-                        yield f"data: {json.dumps({'type': 'token', 'content': chunk_content})}\n\n"
+                        yield _sse({"type": "token", "content": chunk_content})
+
+                elif kind == "on_chain_end" and event["name"] == RESPOND_NODE:
+                    answer = (event["data"]["output"] or {}).get("answer", "")
+                    if not full_answer and answer:
+                        # META / METADATA answer from a template or a SQL result, with no LLM to stream
+                        yield _sse({"type": "token", "content": answer})
+                    # `respond` holds the whole answer; prefer it to the concatenated tokens
+                    full_answer = answer or full_answer
 
                 elif kind == "on_chain_end" and event["name"] in ("retrieve_docs", "web_searcher"):
                     documents = event["data"]["output"].get("documents", documents)

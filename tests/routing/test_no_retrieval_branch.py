@@ -19,6 +19,7 @@ class _FakeModel:
 
     async def ainvoke(self, messages, config=None):
         self.calls.append(messages)
+        self.config = config
         return AIMessage(
             content=self._content,
             usage_metadata={"input_tokens": 30, "output_tokens": 12, "total_tokens": self._total_tokens},
@@ -47,6 +48,7 @@ def test_answers_with_system_prompt_and_no_documents():
     assert [m.type for m in messages] == ["system", "human"]
     assert "法國的首都是哪裡？" in messages[1].content
     assert "knowledge base" in messages[0].content
+    assert model.config == {"tags": ["final_answer"]}
 
 
 def test_default_model_comes_from_llm_factory(monkeypatch):

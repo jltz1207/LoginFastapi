@@ -19,7 +19,7 @@ from app.db.session import get_db_ctx
 from app.llm.factory import LLMFactory
 from app.models.document import Document, IngestionStatus
 from app.rag.prompts import GLOBAL_SUMMARY_ANSWER_PROMPT, GLOBAL_SUMMARY_MAP_PROMPT
-from app.routing.branches.common import Chunk, enforce_knowledge_base_id
+from app.routing.branches.common import FINAL_ANSWER_TAG, Chunk, enforce_knowledge_base_id
 
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
@@ -147,13 +147,13 @@ class GlobalSummaryBranch:
             return _MapReduceResult(answer="", failed_batches=0, token_count=0)
         token_count = 0
 
-        async def complete(prompt: ChatPromptTemplate, batch: list[str]) -> str:
+        async def complete(prompt: ChatPromptTemplate, batch: list[str], tags: list[str] | None = None) -> str:
             nonlocal token_count
             llm = LLMFactory.get_model()
             messages = prompt.format_messages(query=query, summaries="\n\n".join(batch))
             # Every LLM call, the final ANSWER included, counts against the shared cap.
             async with self._guard:
-                response = await llm.ainvoke(messages)
+                response = await llm.ainvoke(messages, config={"tags": tags or []})
             usage = getattr(response, "usage_metadata", None) or {}
             token_count += usage.get("total_tokens", 0)
             content = response.content
@@ -191,7 +191,8 @@ class GlobalSummaryBranch:
             if failures / len(batches) > self._max_failure_ratio:
                 raise RuntimeError(f"{failures}/{len(batches)} map batches failed")
             failed_batches += failures
-        answer = await complete(GLOBAL_SUMMARY_ANSWER_PROMPT, current)
+        # Only the ANSWER call is streamed to the user; MAP output is intermediate.
+        answer = await complete(GLOBAL_SUMMARY_ANSWER_PROMPT, current, tags=[FINAL_ANSWER_TAG])
         return _MapReduceResult(answer=answer, failed_batches=failed_batches, token_count=token_count)
 
 

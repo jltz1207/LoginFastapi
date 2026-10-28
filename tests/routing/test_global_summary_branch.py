@@ -29,10 +29,13 @@ _USAGE = {"input_tokens": 7, "output_tokens": 3, "total_tokens": 10}  # per succ
 class _FakeLLM:
     def __init__(self):
         self.calls: list[str] = []  # "map" / "answer", in call order
+        self.tags: dict[str, list[list[str]]] = {"map": [], "answer": []}
         self.map_error: BaseException | None = None  # raised by map batches containing "boom"
 
-    async def ainvoke(self, messages):
+    async def ainvoke(self, messages, config=None):
         system = messages[0].content
+        kind = "map" if system == _MAP_SYSTEM else "answer"
+        self.tags[kind].append((config or {}).get("tags", []))
         if system == _MAP_SYSTEM:
             self.calls.append("map")
             if self.map_error is not None and "boom" in messages[1].content:
@@ -90,6 +93,12 @@ def test_many_documents_map_then_answer_once(monkeypatch, llm):
     # 50 → 7 intermediate summaries (≤ 8) → 1 answer call.
     assert llm.calls == ["map"] * 7 + ["answer"]
     assert result["answer"] == "final answer"
+
+
+def test_only_the_answer_call_is_tagged_as_final_answer(monkeypatch, llm):
+    _run(monkeypatch, 50, batch_size=8)
+    assert llm.tags["map"] == [[]] * 7
+    assert llm.tags["answer"] == [["final_answer"]]
 
 
 def test_answer_prompt_receives_question_and_summaries():
@@ -185,7 +194,7 @@ def test_guard_size_caps_concurrency_across_requests(monkeypatch):
     in_flight = peak = 0
 
     class _SlowLLM:
-        async def ainvoke(self, messages):
+        async def ainvoke(self, messages, config=None):
             nonlocal in_flight, peak
             in_flight += 1
             peak = max(peak, in_flight)
@@ -283,7 +292,7 @@ def test_llm_sees_summaries_labelled_with_filename(monkeypatch):
     received: list[str] = []
 
     class _RecordingLLM:
-        async def ainvoke(self, messages):
+        async def ainvoke(self, messages, config=None):
             received.append(messages[1].content)
             return AIMessage(content="final answer", usage_metadata=_USAGE)
 

@@ -21,6 +21,7 @@ class _FakeModel:
 
     async def ainvoke(self, messages, config=None):
         self.calls.append(messages)
+        self.config = config
         return AIMessage(
             content=self._content,
             usage_metadata={"input_tokens": 0, "output_tokens": 0, "total_tokens": self._total_tokens},
@@ -69,6 +70,7 @@ def test_synthesizer_uses_injected_model():
 
     assert answer == "synthesized"
     assert len(model.calls) == 1
+    assert model.config == {"tags": ["final_answer"]}
 
 
 def test_chunks_keep_document_metadata():

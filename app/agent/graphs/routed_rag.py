@@ -192,7 +192,8 @@ async def respond_node(state: RoutedAgentState) -> dict:
         last = state.chat_history[-1] if state.chat_history else None
         update = {"answer": last.text if isinstance(last, AIMessage) else ""}
     else:
-        update = {"chat_history": [AIMessage(content=state.answer)]}
+        # `answer` 照樣回傳：API 只讀這個節點的輸出（`on_chain_end`），不讀整份 state
+        update = {"answer": state.answer, "chat_history": [AIMessage(content=state.answer)]}
 
     # trace 不回給使用者（見 `branches/meta.py`），在這裡記進 log 供除錯
     logger.info(

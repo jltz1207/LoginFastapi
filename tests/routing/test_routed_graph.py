@@ -158,6 +158,37 @@ def test_thread_previously_run_by_the_routed_graph_is_readable_by_lookup():
     assert seen == [["第一題", "global answer to 第一題", "第二題"]]
 
 
+def test_final_answer_tag_reaches_stream_events():
+    """The SSE contract in `chats.py`: a branch's tagged ainvoke() streams token events carrying the tag."""
+    from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+
+    from app.routing.branches.no_retrieval import LLMDirectAnswerLLM, NoRetrievalBranch
+
+    model = GenericFakeChatModel(messages=iter([AIMessage("巴黎 是 首都")]))
+    router = _FixedRouter(Route.NO_RETRIEVAL)
+    graph = RoutedGraphFactory.build(
+        InMemorySaver(),
+        router=router,
+        fallback=router,
+        resolver=QueryResolver(rewriter=_RecordingRewriter()),
+        lookup=_lookup,
+        **{**_BRANCHES, "no_retrieval": NoRetrievalBranch(llm=LLMDirectAnswerLLM(model=model))},
+    )
+
+    async def run():
+        return [e async for e in graph.astream_events(_input("法國首都？"), _CONFIG, version="v2")]
+
+    events = asyncio.run(run())
+
+    streamed = [e for e in events if e["event"] == "on_chat_model_stream"]
+    assert len(streamed) > 1  # token by token, not one final chunk
+    assert all("final_answer" in e["tags"] for e in streamed)
+    assert {e["metadata"]["langgraph_node"] for e in streamed} == {"no_retrieval"}
+    assert "".join(e["data"]["chunk"].text for e in streamed) == "巴黎 是 首都"
+    (respond_end,) = [e for e in events if e["event"] == "on_chain_end" and e["name"] == "respond"]
+    assert respond_end["data"]["output"]["answer"] == "巴黎 是 首都"
+
+
 @pytest.mark.parametrize(
     "route,expected",
     [

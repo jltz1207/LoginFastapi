@@ -133,6 +133,59 @@ def test_lookup_stream_persists_both_turns_with_sources(user):
     assert "退款需在七天內申請。" in ai.sources
 
 
+def _tokens(events):
+    return "".join(e["content"] for e in events if e["type"] == "token")
+
+
+def test_routed_branch_streams_only_its_final_answer_call(user):
+    graph = FakeGraph(
+        [
+            chain_start("global"),
+            token("global", "MAP OUTPUT"),  # intermediate map call: not tagged
+            token("global", "整體而言，", tags=["final_answer"]),
+            token("global", "主題是退款。", tags=["final_answer"]),
+            chain_end("global", {"answer": "整體而言，主題是退款。", "documents": []}),
+            chain_end("respond", {"answer": "整體而言，主題是退款。"}),
+        ]
+    )
+
+    events, db = run_chat(user, graph)
+
+    assert _tokens(events) == "整體而言，主題是退款。"
+    assert _messages(db)[RoleEnum.AI].content == "整體而言，主題是退款。"
+
+
+def test_branch_without_llm_sends_the_whole_answer_once(user):
+    graph = FakeGraph(
+        [
+            chain_start("meta"),
+            chain_end("meta", {"answer": "我可以回答知識庫的問題。", "documents": []}),
+            chain_end("respond", {"answer": "我可以回答知識庫的問題。"}),
+        ]
+    )
+
+    events, db = run_chat(user, graph)
+
+    assert [e for e in events if e["type"] == "token"] == [{"type": "token", "content": "我可以回答知識庫的問題。"}]
+    assert _messages(db)[RoleEnum.AI].content == "我可以回答知識庫的問題。"
+
+
+def test_routed_lookup_streams_generate_tokens_once(user):
+    graph = FakeGraph(
+        [
+            token("generate", "七天"),
+            token("generate", "內。"),
+            chain_end("generate", {"chat_history": [AIMessage("七天內。")], "model_used": "m"}),
+            chain_end("respond", {"answer": "七天內。"}),
+        ]
+    )
+
+    events, db = run_chat(user, graph)
+
+    assert _tokens(events) == "七天內。"
+    assert _messages(db)[RoleEnum.AI].content == "七天內。"
+
+
 @pytest.mark.parametrize("strategy,state_class", [(2, "LookupAgentState"), (4, "RoutedAgentState")])
 def test_input_state_matches_the_graph_strategy(monkeypatch, user, strategy, state_class):
     from app.agent import dependencies
