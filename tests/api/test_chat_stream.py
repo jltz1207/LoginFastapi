@@ -265,6 +265,18 @@ def test_routed_nodes_report_status_and_route(user):
     ]
 
 
+def test_graph_failure_sends_error_and_keeps_only_the_question(user):
+    graph = FakeGraph([chain_start("resolve")], error=RuntimeError("secret internal detail"))
+
+    events, db = run_chat(user, graph)
+
+    (error,) = [e for e in events if e["type"] == "error"]
+    assert "secret internal detail" not in error["message"]
+    assert events[-1] == {"type": "done"}
+    assert [m.role for m in db.added] == [RoleEnum.USER]
+    assert db.committed
+
+
 @pytest.mark.parametrize("strategy,state_class", [(2, "LookupAgentState"), (4, "RoutedAgentState")])
 def test_input_state_matches_the_graph_strategy(monkeypatch, user, strategy, state_class):
     from app.agent import dependencies

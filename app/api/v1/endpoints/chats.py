@@ -19,7 +19,6 @@ from app.services.jwtService import getCurrentUser
 from app.services.knowledgeBaseService import get_owned_knowledge_base
 
 from langgraph.graph.state import CompiledStateGraph
-import traceback
 
 router = APIRouter(tags=["Chats"])
 logger = get_logger(__name__)
@@ -136,9 +135,9 @@ async def chat(
                     output = event["data"]["output"] or {}
                     model_used = output.get("model_used", model_used)
         except Exception as e:
-            print(f"Exception Type: {type(e).__name__}")
-            print(f"Exception Details: {e}")
-            print(traceback.format_exc())  # Prints file paths, line numbers, and call stack
+            logger.exception("chat.graph_failed", error_type=type(e).__name__)
+            # internal details stay in the log; the client only learns that the turn failed
+            yield _sse({"type": "error", "message": "The assistant failed to answer. Please try again."})
         # stream finished — persist both turns now that we have the full answer
         formatted_source_str = _format_sources(documents, sql_documents)
 
@@ -169,9 +168,11 @@ async def chat(
             sources=formatted_source_str
         )
         db.add(new_user_msg)
-        db.add(new_ai_msg)
+        if full_answer:
+            # a failed turn keeps the question but must not store an empty answer
+            db.add(new_ai_msg)
         await db.commit()
 
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        yield _sse({"type": "done"})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
