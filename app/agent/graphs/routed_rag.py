@@ -189,14 +189,17 @@ class RoutedGraphFactory(BaseGraphFactory):
         no_retrieval=None,
         meta=None,
     ) -> CompiledStateGraph:
-        """組好但還沒 compile 的 graph。每個節點都可覆寫，方便測試注入假物件，
+        """組好並 compile 的 graph。每個節點都可覆寫，方便測試注入假物件，
         不需要真的打 Gemini/Chroma/PostgreSQL。留空一律用 M1~M4 的預設實作。
+
+        `checkpointer` 掛在這張 parent graph 上：同一個 `thread_id` 的 `chat_history`
+        跨輪累積，resolver 才拿得到前幾輪對話。LOOKUP subgraph 不帶自己的 checkpointer，
+        由 parent 往下傳，兩者共用同一份 persistence。
         """
         g = StateGraph(RoutedAgentState)
         g.add_node("resolve", ResolverNode(resolver=resolver))
         g.add_node("route", RouterNode(router=router, fallback=fallback))
-        search_graph = LookupRagGraphFactory.build(checkpointer=checkpointer, tools=None)
-        g.add_node("lookup", lookup or search_graph)
+        g.add_node("lookup", lookup or LookupRagGraphFactory.build(checkpointer=None, tools=None))
         g.add_node("global", global_summary or global_summary_node)
         g.add_node("metadata", metadata or metadata_query_node)
         g.add_node("multi_hop", multi_hop or agentic_subgraph)
@@ -209,4 +212,4 @@ class RoutedGraphFactory(BaseGraphFactory):
         for leaf in ("lookup", "global", "metadata", "multi_hop", "no_retrieval", "meta"):
             g.add_edge(leaf, END)
 
-        return g.compile()
+        return g.compile(checkpointer=checkpointer)
