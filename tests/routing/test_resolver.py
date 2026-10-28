@@ -78,3 +78,34 @@ def test_router_context_excludes_current_question():
     asyncio.run(node(_state(history)))
 
     assert router.contexts[0].resolved_history == ["退款政策有哪幾點？", "有三點……"]
+
+
+class _FailingRewriter:
+    async def rewrite(self, query, history):
+        raise RuntimeError("quota exceeded")
+
+
+def test_rewriter_failure_degrades_to_original_query():
+    node = ResolverNode(resolver=QueryResolver(rewriter=_FailingRewriter()))
+    history = [HumanMessage("退款政策有哪幾點？"), AIMessage("有三點……"), HumanMessage("那第二點呢？")]
+
+    update = asyncio.run(node(_state(history)))
+
+    assert update["resolved_query"] == "那第二點呢？"
+    assert update["trace"] == ["resolve: rewriter failed (RuntimeError), using original query"]
+
+
+class _CancelledRewriter:
+    async def rewrite(self, query, history):
+        raise asyncio.CancelledError
+
+
+def test_rewriter_cancellation_propagates():
+    node = ResolverNode(resolver=QueryResolver(rewriter=_CancelledRewriter()))
+    history = [HumanMessage("a"), AIMessage("b"), HumanMessage("c")]
+
+    try:
+        asyncio.run(node(_state(history)))
+    except asyncio.CancelledError:
+        return
+    raise AssertionError("CancelledError was swallowed")

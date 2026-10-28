@@ -18,6 +18,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from app.agent.graphs.lookup_rag import LookupRagGraphFactory
 from app.agent.state import RoutedAgentState
+from app.core.logging import get_logger
 from app.routing.branches.global_summary import global_summary_node
 
 from app.routing.branches.meta import meta_node
@@ -30,6 +31,8 @@ from app.routing.resolver import QueryResolver
 from app.routing.router.base import BaseRouter
 from app.routing.router.defaults import get_default_fallback, get_default_router
 from app.routing.taxonomy import DEFAULT_ROUTE, Route, RouterContext
+
+logger = get_logger(__name__)
 
 _DIALOGUE_TYPES = ("human", "ai")
 
@@ -81,16 +84,25 @@ def initial_state(
 
 
 class ResolverNode:
-    """`resolve` 節點：接上 M1 的 `QueryResolver`，保證 `resolved_query` 永遠是完整問句。"""
+    """`resolve` 節點：接上 M1 的 `QueryResolver`，保證 `resolved_query` 永遠是完整問句。
+
+    resolver 只是最佳化：rewrite 失敗時降級成原始 query，不讓整張 graph 失敗。
+    """
 
     def __init__(self, resolver: QueryResolver | None = None):
         self._resolver = resolver or QueryResolver()
 
     async def __call__(self, state: RoutedAgentState) -> dict:
-        resolved = await self._resolver.resolve(state.query, _prior_turns(state.chat_history))
+        try:
+            resolved = await self._resolver.resolve(state.query, _prior_turns(state.chat_history))
+            entry = "resolve: query resolved to standalone question"
+        except Exception as exc:  # noqa: BLE001 - 降級成原始 query；CancelledError 等 BaseException 照樣往上丟
+            logger.warning("routed_rag.resolver_failed", error_type=type(exc).__name__, exc_info=True)
+            resolved = state.query
+            entry = f"resolve: rewriter failed ({type(exc).__name__}), using original query"
         return {
             "resolved_query": resolved,
-            "trace": state.trace + ["resolve: query resolved to standalone question"],
+            "trace": state.trace + [entry],
         }
 
 
