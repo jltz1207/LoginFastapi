@@ -115,6 +115,19 @@ def test_decomposer_sees_retrieved_excerpts():
     assert "很長" * 200 not in human  # excerpt is truncated
 
 
+def test_duplicate_sub_queries_in_one_round_are_retrieved_once():
+    calls = []
+    branch = MultiHopBranch(
+        decomposer=_ScriptedDecomposer([["台北天氣", "台北 天氣", "台北天氣 "]]),
+        retriever=_retriever(calls),
+        synthesizer=_StubSynthesizer(),
+    )
+
+    asyncio.run(branch(_state()))
+
+    assert calls == ["台北天氣"]
+
+
 def test_default_retriever_is_hybrid_with_rerank(monkeypatch):
     from app.routing.branches import multi_hop
 

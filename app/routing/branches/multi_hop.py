@@ -180,12 +180,17 @@ class MultiHopBranch:
 
         for _ in range(self._recursion_limit):
             sub_queries = await self._decomposer.decompose(query, hops)
-            new_sub_queries = [q for q in sub_queries if _normalize(q) not in asked]
+            # 過濾與登記同一步做：同一輪內正規化後相同的 sub-query 也只檢索一次
+            new_sub_queries = []
+            for q in sub_queries:
+                key = _normalize(q)
+                if key not in asked:
+                    asked.add(key)
+                    new_sub_queries.append(q)
             if not new_sub_queries:
                 break
 
             for sub_query in new_sub_queries:
-                asked.add(_normalize(sub_query))
                 chunks = await self.retrieve(retriever, sub_query)
                 cost_units += _estimate_cost(sub_query, chunks)
                 hops.append(HopResult(sub_query=sub_query, chunks=chunks))
