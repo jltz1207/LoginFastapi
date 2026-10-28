@@ -96,6 +96,7 @@ def test_capabilities_reply_only_claims_supported_metadata_queries(language, ban
     reply = _REPLIES[language][MetaIntent.CAPABILITIES]
     for ext in _ALLOWED_FILE_EXTENSIONS:
         assert ext in reply
+    assert "docx" not in reply  # no docx loader: upload rejects it
     for word in banned:
         assert word not in reply.lower()
 

@@ -16,7 +16,7 @@ from app.routing.meta_intents import MetaIntent, classify_meta_intent
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
 
-ROUTER_VERSION = "meta-v4"
+ROUTER_VERSION = "meta-v5"
 
 Language = Literal["zh", "en"]
 
@@ -32,7 +32,7 @@ _REPLIES: dict[Language, dict[MetaIntent | None, str]] = {
             "我是這個知識庫的查詢助理，可以：\n"
             "- 回答知識庫文件裡的具體內容\n"
             "- 比較多份文件，或回答需要串連多處內容的問題\n"
-            "- 依上傳日期、檔案類型（pdf / md / docx），或同一檔名的歷次上傳版本查文件\n"
+            "- 依上傳日期、檔案類型（pdf / md），或同一檔名的歷次上傳版本查文件\n"
             "- 直接回答不需要查知識庫的常識性問題"
         ),
         MetaIntent.IDENTITY: "我是這個系統的查詢助理，負責把你的問題分派到最適合的處理路徑並回答。",
@@ -43,7 +43,7 @@ _REPLIES: dict[Language, dict[MetaIntent | None, str]] = {
             "I'm the query assistant for this knowledge base. I can:\n"
             "- Answer questions about the content of your documents\n"
             "- Compare documents, or answer questions that connect information across several places\n"
-            "- Find documents by upload date, file type (pdf / md / docx), or the upload history of a file name\n"
+            "- Find documents by upload date, file type (pdf / md), or the upload history of a file name\n"
             "- Answer general-knowledge questions that don't need the knowledge base"
         ),
         MetaIntent.IDENTITY: (

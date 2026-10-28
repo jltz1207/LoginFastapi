@@ -27,6 +27,7 @@ from sqlalchemy import text
 from app.core.logging import get_logger
 from app.db.session import AsyncSessionLocal
 from app.llm.factory import LLMFactory
+from app.rag.loaders.base_loader import base_loader
 from app.routing.branches.common import enforce_knowledge_base_id
 
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
@@ -34,12 +35,12 @@ if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `age
 
 logger = get_logger(__name__)
 
-ROUTER_VERSION = "metadata-v2"
+ROUTER_VERSION = "metadata-v3"
 
 _DEFAULT_LIMIT = 20
 
-# 和上傳 endpoint 允許的副檔名一致（app/api/v1/endpoints/knowledgeBases.py）。
-_ALLOWED_FILE_EXTENSIONS = ("pdf", "md", "docx")
+# 直接引用上傳 endpoint 檢查的同一個 tuple（app/api/v1/endpoints/knowledgeBases.py），兩邊不會再分歧。
+_ALLOWED_FILE_EXTENSIONS = base_loader.SUPPORTED_EXTENSIONS
 
 
 class MetadataQueryType(str, Enum):
@@ -95,7 +96,9 @@ class MetadataQueryRequest(BaseModel):
     query_type: MetadataQueryType
     start_date: date | None = Field(default=None, description="BY_DATE_RANGE: inclusive start date, YYYY-MM-DD")
     end_date: date | None = Field(default=None, description="BY_DATE_RANGE: inclusive end date, YYYY-MM-DD")
-    file_extension: str | None = Field(default=None, description="BY_DOCUMENT_TYPE: one of pdf, md, docx")
+    file_extension: str | None = Field(
+        default=None, description=f"BY_DOCUMENT_TYPE: one of {', '.join(_ALLOWED_FILE_EXTENSIONS)}"
+    )
     filename: str | None = Field(default=None, description="BY_VERSION: exact file name, e.g. report.pdf")
 
     @field_validator("file_extension")
@@ -135,7 +138,7 @@ class LLMMetadataQueryExtractor:
             f"今天是 {date.today().isoformat()}。"
             "把使用者問題轉成以下白名單查詢類型之一，並只填入該類型需要的欄位："
             "BY_DATE_RANGE(start_date, end_date；YYYY-MM-DD，兩端都包含) / "
-            "BY_DOCUMENT_TYPE(file_extension: pdf | md | docx) / BY_VERSION(filename)。"
+            f"BY_DOCUMENT_TYPE(file_extension: {' | '.join(_ALLOWED_FILE_EXTENSIONS)}) / BY_VERSION(filename)。"
             "不要輸出任何 SQL，只輸出查詢類型與參數。"
         )
         messages = [("system", instructions), ("human", query)]
