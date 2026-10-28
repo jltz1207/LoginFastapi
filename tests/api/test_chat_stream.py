@@ -214,6 +214,36 @@ def test_sources_list_metadata_rows(user):
     assert _messages(db)[RoleEnum.AI].sources == "Document 1: refund.pdf (d1)"
 
 
+def _usage_message(input_tokens, output_tokens, model=None):
+    return AIMessage(
+        content="x",
+        usage_metadata={
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        },
+        response_metadata={"model_name": model} if model else {},
+    )
+
+
+def test_token_usage_sums_every_llm_call_of_the_turn(user):
+    graph = FakeGraph(
+        [
+            model_end("resolve", _usage_message(10, 1)),
+            model_end("route", _usage_message(20, 2)),
+            model_end("multi_hop", _usage_message(30, 3)),  # decompose
+            model_end("multi_hop", _usage_message(40, 4, model="gemini-x"), tags=["final_answer"]),
+            chain_end("respond", {"answer": "a"}),
+        ]
+    )
+
+    _, db = run_chat(user, graph)
+
+    ai = _messages(db)[RoleEnum.AI]
+    assert (ai.prompt_tokens, ai.completion_tokens) == (100, 10)
+    assert ai.model == "gemini-x"
+
+
 @pytest.mark.parametrize("strategy,state_class", [(2, "LookupAgentState"), (4, "RoutedAgentState")])
 def test_input_state_matches_the_graph_strategy(monkeypatch, user, strategy, state_class):
     from app.agent import dependencies

@@ -109,14 +109,20 @@ async def chat(
                 elif kind == "on_chain_end" and event["name"] == SQL_DOCUMENT_NODE:
                     sql_documents = (event["data"]["output"] or {}).get("sql_documents", sql_documents)
 
+                elif kind == "on_chat_model_end":
+                    # every LLM call of the run (resolver, router, grader, decompose, map, answer…):
+                    # the stored token counts are the real cost of the turn, not just the answer call
+                    message = event["data"].get("output")
+                    usage = getattr(message, "usage_metadata", None) or {}
+                    input_tokens += usage.get("input_tokens", 0)
+                    output_tokens += usage.get("output_tokens", 0)
+                    if FINAL_ANSWER_TAG in event.get("tags", []):
+                        metadata = getattr(message, "response_metadata", None) or {}
+                        model_used = metadata.get("model_name") or metadata.get("model") or model_used
+
                 elif kind == "on_chain_end" and event["name"] in ANSWER_NODES:
                     output = event["data"]["output"] or {}
                     model_used = output.get("model_used", model_used)
-                    ai_message = (output.get("chat_history") or [None])[-1]
-                    usage = getattr(ai_message, "usage_metadata", None) or {}
-                    # accumulate: a tool loop means several LLM round-trips per request
-                    input_tokens += usage.get("input_tokens", 0)
-                    output_tokens += usage.get("output_tokens", 0)
         except Exception as e:
             print(f"Exception Type: {type(e).__name__}")
             print(f"Exception Details: {e}")
