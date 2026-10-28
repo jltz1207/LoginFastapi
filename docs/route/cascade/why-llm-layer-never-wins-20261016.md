@@ -3,7 +3,7 @@
 > 查證日期：2026-10-16。內容依閱讀 `app/routing/router/cascade.py`、`llm.py`、`embedding.py`、
 > `fallback_chain.py`、`app/agent/graphs/routed_rag.py` 整理。第 5 節的數字以假 embedding 模擬實測
 > （Python 3.12.13）；真實 Gemini embedding 下的分佈未實測。
-> 修正計畫見 [cascade-llm-layer-dead-20261016.md](../../../plans/in-progress/cascade-llm-layer-dead-20261016.md)。
+> 修正計畫見 [cascade-llm-layer-dead-20261028.md](../../../plans/finished/cascade-llm-layer-dead-20261028.md)。
 
 **一句話**：LLM 層的 confidence 不是 LLM 給的，而是查 embedding 層剛算過、而且已經確定不及格的那張相似度表，
 所以必定低於門檻，LLM 的決定一定會被丟棄。

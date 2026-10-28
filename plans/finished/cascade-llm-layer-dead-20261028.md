@@ -6,15 +6,15 @@
 | Created | 2026-10-15 |
 | Branches | `master`<br>`worktree-feature-refactor-cascade` |
 | Base commit | — |
-| Sessions | `7016af64-bcf9-4458-9c65-39c74352bb1f`<br>`08386c13-baba-4cb7-b734-6b220ebc785e` |
+| Sessions | `7016af64-bcf9-4458-9c65-39c74352bb1f`<br>`08386c13-baba-4cb7-b734-6b220ebc785e`<br>`97b4d2fb-df87-48e3-b2aa-7b6a564674bd` |
 
-> **狀態：P0-1、P1-1 ～ P1-4、P2-2 ～ P2-4、P2-6、router 改用 factory 已完成（2026-10-16，P0-1 採方案 A）；P2-1、P2-5 未開始。**
+> **狀態：P0-1、P1-1 ～ P1-4、P2-2 ～ P2-4、P2-6、router 改用 factory 已完成（2026-10-16，P0-1 採方案 A）。原本未開始的 P2-1、P2-5 已於 2026-10-28 刪除，不再處理。**
 > review META 分支時順帶發現，見 [review-meta-branch-20261015.md](../finished/review-meta-branch-20261015.md)。
 > 查證日期：2026-10-15。§2 的結論已用假 embedding 模擬實測（Python 3.12.13，程式碼在 §2.2）；
 > 真實 Gemini embedding 下的分佈、延遲數字**未實測**。
 >
 > 2026-10-16 更新：逐層解析 rule / embedding / LLM router 後，把三份文件找到的其他問題併入 §4
-> （P1-3、P1-4、P2-2 ～ P2-6，以及 P2-1 的擴充）。各問題的細節與實測程式見：
+> （P1-3、P1-4、P2-2 ～ P2-6）。各問題的細節與實測程式見：
 > [rule-router](../../docs/route/cascade/rule-router-20261016.md)、
 > [embedding-router](../../docs/route/cascade/embedding-router-20261016.md)、
 > [llm-router](../../docs/route/cascade/llm-router-20261016.md)、
@@ -315,20 +315,6 @@ LLM 層的例外並回傳 embedding 層的結果（低於門檻就 LOOKUP），�
 > `RouterNode` 事後再讀。router instance 改成跨請求共用後，並行請求會互相覆蓋（race condition）。
 > 共用化之前要先把降級紀錄改成隨 `RouteDecision` 回傳，或由 `route()` 回傳一個 result 物件。
 
-### [ ] P2-1｜建立 routing 評估集
-
-修正前後都沒有數據可以比較「只用 LLM」、「修好的 cascade」的準確率與延遲。`taxonomy.py` docstring 提到的
-`eval/annotator_agreement.py` 在 repo 裡**不存在**。建議：
-
-- 收集至少數十條真實問題並標註 route（6 類都要有，特別是不像 `ROUTE_EXAMPLES` 例句的說法）。
-- 量測：各層命中比例、整體準確率、P50 / P95 延遲、每請求 LLM 呼叫次數。
-- 有數據後再決定要不要簡化成只用 LLM（`with_structured_output`）。
-- 用同一份評估集回答以下目前沒有數據的問題（[embedding-router](../../docs/route/cascade/embedding-router-20261016.md) §3.4、§3.5）：
-  - 0.70 門檻在真實 Gemini embedding 下偏嚴還是偏鬆。
-  - 要不要加 margin 判斷（第一名與第二名差距太小時視為沒把握）。
-  - 例句設計：LOOKUP「這份合約的付款條件是什麼？」與 MULTI_HOP「這兩份合約的付款條件哪裡不一樣？」字面幾乎相同，是否造成誤判；
-    META / METADATA 例句多數已被 rule 層攔下，是否該換成換句話說的版本。
-
 ### [x] P2-2｜Rule：英文 METADATA 覆蓋不足、confidence 寫死
 
 > **已完成（2026-10-16）**：
@@ -373,11 +359,6 @@ Gemini explicit caching 的最小 token 門檻（未查證）。
 **待決定**：(a) 查證最小 token 門檻，夠的話在 router 共用化（P1-4）時接上；(b) 不夠就刪除或明確標成未啟用，
 改依 Gemini implicit caching。
 
-### [ ] P2-5｜LLM：structured output 先輸出 route、後輸出 reasoning
-
-`_LLMRouteOutput` 欄位順序實測為 `['route', 'reasoning']`，模型先決定再解釋，reasoning 對判斷沒有幫助（推論）。
-把 `reasoning` 移到前面（並設為必填）讓模型先想再答，用 P2-1 的評估集比較準確率與延遲後再決定。改動要遞增 `llm.py` 的 `ROUTER_VERSION`。
-
 ### [x] P2-6｜LLM：Gemini 呼叫沒有 timeout
 
 `LLMRouter.route()` 呼叫 Gemini 沒有設逾時，延遲沒有上限（推論）。設定 timeout，逾時丟例外，
@@ -402,7 +383,7 @@ Gemini explicit caching 的最小 token 門檻（未查證）。
   已在 [advanced-router-integration-20261016.md](advanced-router-integration-20261016.md) 決策 3 與 M-INT3 註記。
 - 取捨：
   - `LLMFactory` 不設 `temperature`，routing 不再固定 `temperature=0`，同一個問題的分類可能不完全穩定（推論）。
-  - embedding 模型換成 `gemini-embedding-001` 後相似度分佈會改變，0.70 門檻更需要 P2-1 校準（推論，未實測）。
+  - embedding 模型換成 `gemini-embedding-001` 後相似度分佈會改變，0.70 門檻可能需要重新校準（推論，未實測）。
 - 測試：`test_router_sharing.py` 改寫 1 個、新增 2 個（`LLMFactory` 只呼叫一次、`EmbeddingFactory` 接線、factory 回傳 `None`）；
   全部測試 289 passed。
 
@@ -420,11 +401,9 @@ flowchart LR
     P01 --> P11[P1-1 解除 embedding 耦合]
     P01 --> P12["P1-2 cascade 中途失敗<br/>（需先確認設計）"]
     P01 --> P23[P2-3 _threshold dead code]
-    P21[P2-1 評估集] -.->|修正前後比較| P01
     P13[P1-3 rule METADATA 誤判<br/>+ router 測試] --> P22[P2-2 rule 英文 / confidence]
     P14[P1-4 router 共用化] --> P24["P2-4 prompt cache<br/>（已刪除）"]
     P12 --> P26[P2-6 LLM timeout]
-    P21 -.-> P25[P2-5 reasoning 欄位順序]
 ```
 
 P1-3、P1-4 與 P0-1 互不依賴，可以平行做。
