@@ -152,13 +152,17 @@ class MultiHopBranch:
         retriever = self._retriever or _build_retriever(state.tenant_id, state.user_id, knowledge_base_id)
         query = state.resolved_query
 
+        # 由這裡建立、`_run_hops` 就地 append：逾時取消 `_run_hops` 後，已完成的 hop 仍然保留，
+        # 和其他三個護欄一樣是「停下來但保留成果」。
+        hops: list[HopResult] = []
+        guardrail_hits: list[str] = []
         try:
-            hops, guardrail_hits = await asyncio.wait_for(
-                self._run_hops(retriever, query),
+            await asyncio.wait_for(
+                self._run_hops(retriever, query, hops, guardrail_hits),
                 timeout=self._global_timeout_seconds,
             )
         except asyncio.TimeoutError:
-            hops, guardrail_hits = [], ["global_timeout"]
+            guardrail_hits.append("global_timeout")
 
         if hops:
             answer = await self._synthesizer.synthesize(query, hops)
@@ -172,11 +176,11 @@ class MultiHopBranch:
             + [f"multi_hop: hops={len(hops)} kb={knowledge_base_id} guardrails={guardrail_hits}"],
         }
 
-    async def _run_hops(self, retriever: Runnable, query: str) -> tuple[list[HopResult], list[str]]:
-        hops: list[HopResult] = []
+    async def _run_hops(
+        self, retriever: Runnable, query: str, hops: list[HopResult], guardrail_hits: list[str]
+    ) -> None:
         asked: set[str] = set()
         cost_units = 0
-        guardrail_hits: list[str] = []
 
         for _ in range(self._recursion_limit):
             sub_queries = await self._decomposer.decompose(query, hops)
@@ -196,11 +200,9 @@ class MultiHopBranch:
                 hops.append(HopResult(sub_query=sub_query, chunks=chunks))
                 if cost_units >= self._max_cost_units:
                     guardrail_hits.append("cost_cap")
-                    return hops, guardrail_hits
+                    return
         else:
             guardrail_hits.append("recursion_limit")
-
-        return hops, guardrail_hits
 
 
 agentic_subgraph = MultiHopBranch()

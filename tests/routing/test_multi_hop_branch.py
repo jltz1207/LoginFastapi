@@ -128,6 +128,57 @@ def test_duplicate_sub_queries_in_one_round_are_retrieved_once():
     assert calls == ["台北天氣"]
 
 
+class _HangsAfterFirstRetriever:
+    def __init__(self):
+        self.calls = 0
+
+    async def ainvoke(self, query):
+        self.calls += 1
+        if self.calls > 1:
+            await asyncio.sleep(10)
+        return [Document(id=f"doc:{query}", page_content=f"content of {query}")]
+
+
+class _RecordingSynthesizer:
+    def __init__(self):
+        self.hops = None
+
+    async def synthesize(self, query, hops):
+        self.hops = hops
+        return "partial answer"
+
+
+def test_timeout_keeps_completed_hops():
+    synthesizer = _RecordingSynthesizer()
+    branch = MultiHopBranch(
+        decomposer=_ScriptedDecomposer([["A"], ["B"]]),
+        retriever=_HangsAfterFirstRetriever(),
+        synthesizer=synthesizer,
+        global_timeout_seconds=0.2,
+    )
+
+    update = asyncio.run(branch(_state()))
+
+    assert [h.sub_query for h in synthesizer.hops] == ["A"]
+    assert update["answer"] == "partial answer"
+    assert [c.chunk_id for c in update["documents"]] == ["doc:A"]
+    assert "global_timeout" in update["trace"][-1]
+
+
+def test_recursion_limit_is_recorded():
+    branch = MultiHopBranch(
+        decomposer=_ScriptedDecomposer([["A"], ["B"], ["C"]]),
+        retriever=_retriever(),
+        synthesizer=_StubSynthesizer(),
+        recursion_limit=2,
+    )
+
+    update = asyncio.run(branch(_state()))
+
+    assert len(update["documents"]) == 2
+    assert "recursion_limit" in update["trace"][-1]
+
+
 def test_default_retriever_is_hybrid_with_rerank(monkeypatch):
     from app.routing.branches import multi_hop
 
