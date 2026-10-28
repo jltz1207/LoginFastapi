@@ -23,6 +23,7 @@ from langchain_core.runnables import Runnable
 from app.llm.factory import LLMFactory
 from pydantic import BaseModel
 
+from app.rag.prompts import MULTI_HOP_DECOMPOSE_PROMPT
 from app.rag.reranker.reranker import with_rerank
 from app.rag.retriever.hybrid_retriever import HybridRetriever
 from app.routing.branches.common import enforce_knowledge_base_id
@@ -31,7 +32,7 @@ from app.agent.state import Chunk
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
 
-ROUTER_VERSION = "multi-hop-v1"
+ROUTER_VERSION = "multi-hop-v2"
 
 
 class HopResult(BaseModel):
@@ -63,30 +64,37 @@ def _estimate_cost(sub_query: str, chunks: list[Chunk]) -> int:
     """token-ish 用量估算，只給護欄用的近似值，不是校準過的業務成本。"""
     return len(sub_query) + sum(len(c.content) for c in chunks)
 
+# decomposer 每個 hop 看到的摘錄：前幾個 chunk、每個截斷到固定長度，控制 prompt 大小。
+_EXCERPT_CHUNKS_PER_HOP = 2
+_EXCERPT_CHARS = 300
+
+
+class _DecomposeOutput(BaseModel):
+    sub_queries: list[str]
+
+
+def _format_hops(hops: list[HopResult]) -> str:
+    if not hops:
+        return "（尚無）"
+    blocks = []
+    for hop in hops:
+        excerpts = [c.content[:_EXCERPT_CHARS] for c in hop.chunks[:_EXCERPT_CHUNKS_PER_HOP]]
+        body = "\n".join(f"  > {e}" for e in excerpts) or "  > （沒有檢索到內容）"
+        blocks.append(f"- {hop.sub_query}\n{body}")
+    return "\n".join(blocks)
+
+
 class LLMQueryDecomposer:
     def __init__(self, structured_model=None):
         self._structured_model = structured_model
 
     def _get_structured_model(self):
-        if self._structured_model is not None:
-            return self._structured_model
-        class _DecomposeOutput(BaseModel):
-            sub_queries: list[str]
-        base_model = LLMFactory.get_model()
-        self._structured_model = base_model.with_structured_output(_DecomposeOutput)
+        if self._structured_model is None:
+            self._structured_model = LLMFactory.get_model().with_structured_output(_DecomposeOutput)
         return self._structured_model
 
     async def decompose(self, query: str, hops_so_far: list[HopResult]) -> list[str]:
-        history = "\n".join(f"- {h.sub_query}" for h in hops_so_far) or "（尚無）"
-        instructions = (
-            "你在幫一個需要多次檢索才能回答的問題做分解。"
-            "根據原始問題與已經查過的 sub-query，列出下一輪還需要查的 sub-query。"
-            "如果已經有足夠資訊可以回答原始問題，回傳空清單。"
-        )
-        messages = [
-            ("system", instructions),
-            ("human", f"原始問題：{query}\n\n已查過：\n{history}"),
-        ]
+        messages = MULTI_HOP_DECOMPOSE_PROMPT.format_messages(query=query, hops=_format_hops(hops_so_far))
         output = await self._get_structured_model().ainvoke(messages)
         return output.sub_queries
 

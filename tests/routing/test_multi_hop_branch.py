@@ -82,6 +82,39 @@ def test_chunks_keep_document_metadata():
     assert chunk.metadata == {"document_id": "d-1"}
 
 
+class _RecordingStructuredModel:
+    def __init__(self, rounds):
+        self._rounds = list(rounds)
+        self.calls: list = []
+
+    async def ainvoke(self, messages, config=None):
+        from app.routing.branches.multi_hop import _DecomposeOutput
+
+        self.calls.append(messages)
+        return _DecomposeOutput(sub_queries=self._rounds.pop(0) if self._rounds else [])
+
+
+def test_decomposer_sees_retrieved_excerpts():
+    from app.agent.state import Chunk
+    from app.routing.branches.multi_hop import LLMQueryDecomposer
+
+    model = _RecordingStructuredModel([["誰負責專案 X"]])
+    decomposer = LLMQueryDecomposer(structured_model=model)
+    hops = [
+        HopResult(
+            sub_query="專案 X 的負責人",
+            chunks=[Chunk(chunk_id="c1", content="專案 X 由王小明負責。" + "很長" * 500)],
+        )
+    ]
+
+    result = asyncio.run(decomposer.decompose("王小明還負責哪些專案？", hops))
+
+    assert result == ["誰負責專案 X"]
+    human = model.calls[0][-1].content
+    assert "專案 X 由王小明負責。" in human
+    assert "很長" * 200 not in human  # excerpt is truncated
+
+
 def test_default_retriever_is_hybrid_with_rerank(monkeypatch):
     from app.routing.branches import multi_hop
 
