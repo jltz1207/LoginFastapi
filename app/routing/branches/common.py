@@ -1,6 +1,6 @@
 """所有 leaf branch 共用的型別與租戶隔離守門函式。
 
-CLAUDE.md 的租戶隔離規則：leaf node 必須自行強制注入 `knowledge_base_id`，
+租戶隔離規則：leaf node 必須自行強制注入 `knowledge_base_id`，
 不得信任 router 輸出的 `filters`。`enforce_knowledge_base_id()` 是這個規則
 的唯一實作，所有會碰知識庫/資料庫的分支都必須先呼叫它，而不是自己去
 `state.filters` 或其他來源東拼西湊 tenant 邊界。

@@ -1,8 +1,8 @@
 """Query routing taxonomy。
 
 6 類定案（2026-08-10，`OUT_OF_SCOPE` 已刪除，不得復用）。新增或合併類別前，
-必須先對 >=20 條樣本做雙人獨立標註，一致率 < 90% 禁止 merge（見
-`eval/annotator_agreement.py`）。
+必須先對 >=20 條樣本做雙人獨立標註，一致率 < 90% 禁止 merge
+（repo 裡目前沒有計算一致率的工具，需要時再補）。
 """
 
 from __future__ import annotations
