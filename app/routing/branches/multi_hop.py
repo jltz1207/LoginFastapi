@@ -1,7 +1,6 @@
 """MULTI_HOP 分支：唯一的 agentic 分支。decompose -> 迭代檢索 -> synthesize。
 
-四項護欄缺一不可上線（CLAUDE.md 開發約定），全部是建構子的必填數值型參數，
-不能傳 `None` 關掉：
+四項護欄缺一不可上線。前三項數值是建構子參數（有預設值，可以調整，但沒有關掉的選項）：
 1. `recursion_limit`：最多幾輪 decompose -> retrieve 迭代。
 2. `max_cost_units`：累積用量上限 = 檢索字數 + decompose 的 LLM token（近似值，不是校準過的
    業務成本，只用來當安全煞車，不可拿去當 M8/M9 的 cost-weighted error 依據）。
@@ -11,6 +10,9 @@
 
 租戶隔離：`knowledge_base_id` 一律用 `common.enforce_knowledge_base_id()` 從
 state 強制取出，每一跳檢索都帶著它，不信任 router 輸出的 `state.filters`。
+
+`agentic_subgraph` 是 module-level singleton，所有 request 共用：任何 per-request 狀態
+（retriever、hops、用量）都不得寫回 `self`。
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from app.rag.retriever.hybrid_retriever import HybridRetriever
 from app.routing.branches.common import enforce_knowledge_base_id
 from app.agent.state import Chunk
 
-if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
+if TYPE_CHECKING:  # annotation only; `Chunk` above is already a runtime import from `agent`
     from app.agent.state import RoutedAgentState
 
 ROUTER_VERSION = "multi-hop-v2"
