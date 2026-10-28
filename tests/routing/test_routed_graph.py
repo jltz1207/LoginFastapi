@@ -94,6 +94,38 @@ def test_second_turn_sees_the_first_turn():
     assert [m.content for m in history] == ["退款政策有哪幾點？", "lookup answer to 退款政策有哪幾點？"]
 
 
+def test_thread_previously_run_by_the_lookup_graph_is_readable():
+    """GRAPH_STRATEGY 2 → 4 keeps the same thread_id; the old checkpoint has LookupAgentState channels."""
+    from langgraph.graph import END, START, StateGraph
+
+    from app.agent.state import LookupAgentState
+
+    async def old_generate(state):
+        return {"chat_history": [AIMessage("old answer")], "standalone_query": "x", "grade": 9}
+
+    old = StateGraph(LookupAgentState)
+    old.add_node("generate", old_generate)
+    old.add_edge(START, "generate")
+    old.add_edge("generate", END)
+
+    saver = InMemorySaver()
+    rewriter = _RecordingRewriter()
+    old_input = LookupAgentState(
+        query="舊問題", tenant_id="t-1", user_id="u-1", knowledge_base_id="kb-1",
+        chat_history=[HumanMessage("舊問題")],
+    )
+
+    async def run():
+        await old.compile(checkpointer=saver).ainvoke(old_input, _CONFIG)
+        return await _graph(Route.GLOBAL, rewriter=rewriter, checkpointer=saver).ainvoke(_input("新問題"), _CONFIG)
+
+    result = asyncio.run(run())
+
+    assert result["answer"] == "global answer to 新問題"
+    (history,) = rewriter.histories
+    assert [m.content for m in history] == ["舊問題", "old answer"]
+
+
 @pytest.mark.parametrize(
     "route,expected",
     [
