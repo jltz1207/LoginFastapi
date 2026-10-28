@@ -31,13 +31,13 @@ def _state(tenant_id: str, user_id: str, knowledge_base_id: str) -> RoutedAgentS
 def test_retriever_is_scoped_per_request_not_cached_on_shared_instance(monkeypatch):
     calls: list[tuple[str, str, str]] = []
 
-    def fake_get_retriever(self, tenant_id, user_id, knowledge_base_id, top_k=8):
+    def fake_build_retriever(tenant_id, user_id, knowledge_base_id):
         calls.append((tenant_id, user_id, knowledge_base_id))
         return RunnableLambda(
             lambda query: [Document(id=f"{tenant_id}-chunk", page_content=f"{tenant_id}:{query}")]
         )
 
-    monkeypatch.setattr(multi_hop.BasicRetriever, "get_retriever", fake_get_retriever)
+    monkeypatch.setattr(multi_hop, "_build_retriever", fake_build_retriever)
 
     # One instance serving two tenants, mirroring the module-level `agentic_subgraph`.
     branch = MultiHopBranch(decomposer=_OneHopDecomposer(), synthesizer=_StubSynthesizer())

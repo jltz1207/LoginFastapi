@@ -23,7 +23,8 @@ from langchain_core.runnables import Runnable
 from app.llm.factory import LLMFactory
 from pydantic import BaseModel
 
-from app.rag.retriever.basic_retriever import BasicRetriever
+from app.rag.reranker.reranker import with_rerank
+from app.rag.retriever.hybrid_retriever import HybridRetriever
 from app.routing.branches.common import enforce_knowledge_base_id
 from app.agent.state import Chunk
 
@@ -45,6 +46,15 @@ class QueryDecomposer(Protocol):
 
 class Synthesizer(Protocol):
     async def synthesize(self, query: str, hops: list[HopResult]) -> str: ...
+
+def _build_retriever(tenant_id: str, user_id: str, knowledge_base_id: str) -> Runnable:
+    """和 LOOKUP（`app/agent/nodes/retrieval.py`）同一套檢索：hybrid（向量 0.6 / BM25 0.4）+ rerank。
+
+    per-request 建立的成本很低：BM25 index 由 `BM25IndexProvider` 快取。
+    """
+    retriever = HybridRetriever((0.6, 0.4)).get_retriever(tenant_id, user_id, knowledge_base_id, top_k=4)
+    return with_rerank(retriever, rerank_top_k=4)
+
 
 def _normalize(sub_query: str) -> str:
     return re.sub(r"\s+", "", sub_query.strip().lower())
@@ -131,9 +141,7 @@ class MultiHopBranch:
         # Injected retriever wins (tests); otherwise build one scoped to this request's
         # tenant. Never cache it on self: `agentic_subgraph` is a module-level singleton,
         # so writing back would leak the first request's tenant scope to every later user.
-        retriever = self._retriever or BasicRetriever().get_retriever(
-            state.tenant_id, state.user_id, knowledge_base_id, top_k=4
-        )
+        retriever = self._retriever or _build_retriever(state.tenant_id, state.user_id, knowledge_base_id)
         query = state.resolved_query
 
         try:

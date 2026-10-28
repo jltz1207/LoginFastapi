@@ -80,3 +80,29 @@ def test_chunks_keep_document_metadata():
 
     (chunk,) = update["documents"]
     assert chunk.metadata == {"document_id": "d-1"}
+
+
+def test_default_retriever_is_hybrid_with_rerank(monkeypatch):
+    from app.routing.branches import multi_hop
+
+    built = []
+
+    class _FakeHybrid:
+        def __init__(self, weights):
+            built.append(("hybrid", weights))
+
+        def get_retriever(self, tenant_id, user_id, knowledge_base_id, top_k):
+            built.append(("scope", tenant_id, user_id, knowledge_base_id, top_k))
+            return _retriever()
+
+    def fake_with_rerank(retriever, rerank_top_k):
+        built.append(("rerank", rerank_top_k))
+        return retriever
+
+    monkeypatch.setattr(multi_hop, "HybridRetriever", _FakeHybrid)
+    monkeypatch.setattr(multi_hop, "with_rerank", fake_with_rerank)
+    branch = MultiHopBranch(decomposer=_ScriptedDecomposer([["A"]]), synthesizer=_StubSynthesizer())
+
+    asyncio.run(branch(_state()))
+
+    assert built == [("hybrid", (0.6, 0.4)), ("scope", "t-1", "u-1", "kb-1", 4), ("rerank", 4)]
