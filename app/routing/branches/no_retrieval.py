@@ -12,11 +12,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from app.llm.factory import LLMFactory
+from app.rag.prompts import NO_RETRIEVAL_PROMPT
 
 if TYPE_CHECKING:  # type-only: keeps `routing` free of a runtime import on `agent`
     from app.agent.state import RoutedAgentState
 
-ROUTER_VERSION = "no-retrieval-v1"
+ROUTER_VERSION = "no-retrieval-v2"
 
 
 class DirectAnswerLLM(Protocol):
@@ -30,12 +31,12 @@ class LLMDirectAnswerLLM:
     async def complete(self, query: str) -> str:
         if self._model is not None:
             model = self._model
-            response = await model.ainvoke(query)
+            response = await model.ainvoke(NO_RETRIEVAL_PROMPT.format_messages(question=query))
             content = response.content
             return content if isinstance(content, str) else str(content)
         factory = LLMFactory()
         model = factory.get_model()
-        response = await model.ainvoke(query)
+        response = await model.ainvoke(NO_RETRIEVAL_PROMPT.format_messages(question=query))
         content = response.content
         return content if isinstance(content, str) else str(content)
 

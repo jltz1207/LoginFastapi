@@ -3,3 +3,4 @@ from .finalize_prompt import FINALIZE_PROMPT
 from .qa_prompt import QA_PROMPT
 from .document_summary_prompt import DOCUMENT_SUMMARY_MAP_PROMPT, DOCUMENT_SUMMARY_REDUCE_PROMPT
 from .global_summary_prompt import GLOBAL_SUMMARY_ANSWER_PROMPT, GLOBAL_SUMMARY_MAP_PROMPT
+from .no_retrieval_prompt import NO_RETRIEVAL_PROMPT
