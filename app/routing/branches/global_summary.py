@@ -45,7 +45,8 @@ async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id
         Document.user_id == uuid.UUID(user_id),
         Document.status == IngestionStatus.INDEXED,
         Document.deleted_at.is_(None),
-        Document.summary.is_not(None)
+        Document.summary.is_not(None),
+        Document.summary != "",
     ).order_by(
         # Fixed order keeps batch grouping (and so the answer) stable, and decides which
         # documents survive `max_documents` truncation. `id` breaks ties and NULL `created_dt`.
@@ -60,7 +61,7 @@ async def fetch_document_summaries(tenant_id:str, user_id:str, knowledge_base_id
     return [
         Chunk(
             chunk_id=str(doc.id),
-            content=doc.summary or "",
+            content=doc.summary,
             source=doc.filename,
             metadata={"document_id": str(doc.id)},
         )

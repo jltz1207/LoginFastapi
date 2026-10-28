@@ -8,7 +8,7 @@
 | Base commit | `8f37bf2` |
 | Sessions | `ec0a432b-1d27-49db-8fe0-b374d0cce51d`<br>`a37ab315-a48b-4f04-ac24-1762b2b336eb`<br>`1c8e0770-0856-4368-8eff-395cfab8ddc4` |
 
-> 狀態：**P0-1、P0-2、P1-1 已完成**（commit `8d03bc0`、`59e72f4`、`02a798d`）；**P1-2 已完成**（commit `ef37efe`）；**P1-3 已完成**（commit `2a1a071`）；**P2-1 已完成**（未 commit）。全部由 `tests/routing/test_global_summary_branch.py` 覆蓋，其餘項目尚未開始。
+> 狀態：**P0-1、P0-2、P1-1 已完成**（commit `8d03bc0`、`59e72f4`、`02a798d`）；**P1-2 已完成**（commit `ef37efe`）；**P1-3 已完成**（commit `2a1a071`）；**P2-1 已完成**（commit `5225eff`）；**P2-2 已完成**（未 commit）。全部由 `tests/routing/test_global_summary_branch.py` 覆蓋，其餘項目尚未開始。
 
 ## Context
 
@@ -161,11 +161,17 @@ LLM 呼叫次數隨文件數線性成長（50 份 → 8 次，500 份 → 72 次
 - `_guarded()` 只剩轉呼叫，已經 inline 掉。
 - 測試新增 2 個：同一個 instance 同時跑兩個 request（`batch_size=4`、`guard_size=6`，每個 request 第一輪有 10 個 batch），觀察到的 peak 並發數是 6（舊程式碼是 12，已確認會 fail），以及非法的 `guard_size`。實測 `tests/` 全部 311 passed。
 
-### [ ] P2-2｜空字串 summary 也會送進 LLM
+### [x] P2-2｜空字串 summary 也會送進 LLM
 
 filter 只排除 `NULL`。`doc.summary or ""`（`:45`）在 `is_not(None)` 之後是多餘的。
 
 **修法**：加上 `Document.summary != ""`，並刪掉 `or ""`。
+
+#### P2-2 實作結果（2026-10-28，未 commit）
+
+- `fetch_document_summaries()` 的 WHERE 加上 `Document.summary != ""`，`Chunk.content` 改成直接用 `doc.summary`。
+- 只有空白字元的 summary（例如 `"  "`）沒有排除，因為修法只要求排除空字串。`summarizer.py` 的 prompt 要求 summary 以 `Topics:` 行開頭，所以只有空白的 summary 應該很少見，但這只是 LLM 輸出，沒有被保證。
+- 測試新增 1 個：攔截 statement，確認 WHERE 同時有 `summary IS NOT NULL` 和 `summary != ...`（舊程式碼已確認會 fail）。實測 `tests/` 全部 312 passed。
 
 ### [ ] P2-3｜Style
 

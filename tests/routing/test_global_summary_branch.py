@@ -258,6 +258,27 @@ def test_fetched_summaries_are_ordered_by_created_dt_then_id(monkeypatch):
     assert order_by == ["documents.created_dt", "documents.id"]
 
 
+def test_fetched_summaries_exclude_null_and_empty(monkeypatch):
+    executed = []
+
+    class _FakeSession:
+        async def execute(self, stmt):
+            executed.append(stmt)
+            return SimpleNamespace(all=lambda: [])
+
+    @asynccontextmanager
+    async def fake_db_ctx():
+        yield _FakeSession()
+
+    monkeypatch.setattr(global_summary, "get_db_ctx", fake_db_ctx)
+    asyncio.run(
+        global_summary.fetch_document_summaries(str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()))
+    )
+    where = [str(clause) for clause in executed[0].whereclause.clauses]
+    assert "documents.summary IS NOT NULL" in where
+    assert "documents.summary != :summary_1" in where
+
+
 def test_llm_sees_summaries_labelled_with_filename(monkeypatch):
     received: list[str] = []
 
