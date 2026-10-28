@@ -69,3 +69,14 @@ def test_synthesizer_uses_injected_model():
 
     assert answer == "synthesized"
     assert len(model.calls) == 1
+
+
+def test_chunks_keep_document_metadata():
+    branch = MultiHopBranch(
+        decomposer=_ScriptedDecomposer([["A 的規格"]]), retriever=_retriever(), synthesizer=_StubSynthesizer()
+    )
+
+    update = asyncio.run(branch(_state()))
+
+    (chunk,) = update["documents"]
+    assert chunk.metadata == {"document_id": "d-1"}

@@ -123,7 +123,8 @@ class MultiHopBranch:
 
     async def retrieve(self, retriever: Runnable, sub_query: str) -> list[Chunk]:
         docs = await retriever.ainvoke(sub_query)
-        return [Chunk(chunk_id=doc.id, content=doc.page_content) for doc in docs]
+        # 保留 chunk metadata（含 `document_id`），下游 sources / citation 才找得到出處。
+        return [Chunk(chunk_id=doc.id, content=doc.page_content, metadata=doc.metadata) for doc in docs]
 
     async def __call__(self, state: RoutedAgentState) -> dict:
         knowledge_base_id = enforce_knowledge_base_id(state)
