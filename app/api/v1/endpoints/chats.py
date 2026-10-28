@@ -4,13 +4,11 @@ from typing import AsyncGenerator
 from fastapi import APIRouter
 from fastapi.params import Depends
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import HumanMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 
-from app.agent.dependencies import get_compiled_graph
+from app.agent.dependencies import build_initial_state, get_compiled_graph
 from app.agent.runtime_config import get_agent_config
-from app.agent.state import LookupAgentState
 from app.core.logging import get_logger
 from app.db.session import get_db
 from app.models.asistantMessage import AsistantMessage, RoleEnum
@@ -39,12 +37,11 @@ async def chat(
 ):
     await get_owned_knowledge_base(db, requestModel.knowledge_base_id, current_user)
     clean_user_question = requestModel.question.strip()
-    init_state = LookupAgentState(
+    init_state = build_initial_state(
         user_id=str(current_user.id),
         tenant_id=str(current_user.tenant_id),
         knowledge_base_id=str(requestModel.knowledge_base_id),
-        query=clean_user_question,
-        chat_history=[HumanMessage(content=clean_user_question)]
+        question=clean_user_question,
     )
     config = get_agent_config(user_id=current_user.id, knowledge_base_id=requestModel.knowledge_base_id)
 

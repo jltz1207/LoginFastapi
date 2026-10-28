@@ -131,3 +131,18 @@ def test_lookup_stream_persists_both_turns_with_sources(user):
     ai = _messages(db)[RoleEnum.AI]
     assert ai.content == "七天內。"
     assert "退款需在七天內申請。" in ai.sources
+
+
+@pytest.mark.parametrize("strategy,state_class", [(2, "LookupAgentState"), (4, "RoutedAgentState")])
+def test_input_state_matches_the_graph_strategy(monkeypatch, user, strategy, state_class):
+    from app.agent import dependencies
+
+    monkeypatch.setattr(dependencies.settings, "GRAPH_STRATEGY", strategy)
+    graph = FakeGraph([])
+
+    run_chat(user, graph, question="  你好  ")
+
+    (state,) = graph.inputs
+    assert type(state).__name__ == state_class
+    assert state.query == "你好"
+    assert [(m.type, m.content) for m in state.chat_history] == [("human", "你好")]
