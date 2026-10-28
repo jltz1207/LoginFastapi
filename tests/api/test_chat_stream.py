@@ -186,6 +186,34 @@ def test_routed_lookup_streams_generate_tokens_once(user):
     assert _messages(db)[RoleEnum.AI].content == "七天內。"
 
 
+def test_sources_come_from_routed_branches(user):
+    summaries = [Chunk(chunk_id="d1", content="退款政策摘要", source="refund.pdf")]
+    graph = FakeGraph(
+        [
+            chain_end("global", {"answer": "a", "documents": summaries}),
+            chain_end("respond", {"answer": "a"}),
+        ]
+    )
+
+    _, db = run_chat(user, graph)
+
+    assert _messages(db)[RoleEnum.AI].sources == "Document 1: 退款政策摘要"
+
+
+def test_sources_list_metadata_rows(user):
+    rows = [{"id": "d1", "filename": "refund.pdf", "file_extension": "pdf"}]
+    graph = FakeGraph(
+        [
+            chain_end("metadata", {"answer": "a", "sql_documents": rows}),
+            chain_end("respond", {"answer": "a"}),
+        ]
+    )
+
+    _, db = run_chat(user, graph)
+
+    assert _messages(db)[RoleEnum.AI].sources == "Document 1: refund.pdf (d1)"
+
+
 @pytest.mark.parametrize("strategy,state_class", [(2, "LookupAgentState"), (4, "RoutedAgentState")])
 def test_input_state_matches_the_graph_strategy(monkeypatch, user, strategy, state_class):
     from app.agent import dependencies

@@ -31,6 +31,22 @@ ANSWER_NODES = ("generate", "finalize")
 RESPOND_NODE = "respond"
 
 
+# nodes whose output `documents` (Chunks) are the sources of the answer; the last one to finish wins
+DOCUMENT_NODES = ("retrieve_docs", "web_searcher", "global", "multi_hop", "no_retrieval", "meta")
+# METADATA answers from SQL rows (`sql_documents`), not Chunks
+SQL_DOCUMENT_NODE = "metadata"
+
+
+def _format_sources(documents: list, sql_documents: list[dict]) -> str:
+    # `documents` are `Chunk`s (app/agent/state.py): the text is `content`, not langchain's `page_content`
+    lines = [f"Document {n}: " + doc.content for n, doc in enumerate(documents, start=1)]
+    lines += [
+        f"Document {n}: {row.get('filename', '')} ({row.get('id', '')})"
+        for n, row in enumerate(sql_documents, start=len(lines) + 1)
+    ]
+    return "\n".join(lines)
+
+
 def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
@@ -62,6 +78,7 @@ async def chat(
         full_answer = ""
         model_used = "unknown model"
         documents = []
+        sql_documents = []
         input_tokens = 0
         output_tokens = 0
         try:
@@ -86,8 +103,11 @@ async def chat(
                     # `respond` holds the whole answer; prefer it to the concatenated tokens
                     full_answer = answer or full_answer
 
-                elif kind == "on_chain_end" and event["name"] in ("retrieve_docs", "web_searcher"):
-                    documents = event["data"]["output"].get("documents", documents)
+                elif kind == "on_chain_end" and event["name"] in DOCUMENT_NODES:
+                    documents = (event["data"]["output"] or {}).get("documents", documents)
+
+                elif kind == "on_chain_end" and event["name"] == SQL_DOCUMENT_NODE:
+                    sql_documents = (event["data"]["output"] or {}).get("sql_documents", sql_documents)
 
                 elif kind == "on_chain_end" and event["name"] in ANSWER_NODES:
                     output = event["data"]["output"] or {}
@@ -102,10 +122,7 @@ async def chat(
             print(f"Exception Details: {e}")
             print(traceback.format_exc())  # Prints file paths, line numbers, and call stack
         # stream finished — persist both turns now that we have the full answer
-        # `documents` are `Chunk`s (app/agent/state.py): the text is `content`, not langchain's `page_content`
-        formatted_source_str = "\n".join(
-            f"Document {doc_number}: " + doc.content for doc_number, doc in enumerate(documents, start=1)
-        )
+        formatted_source_str = _format_sources(documents, sql_documents)
 
         get_max_seq_num = select(func.max(AsistantMessage.sequence_number)).where(
             AsistantMessage.user_id == current_user.id,
