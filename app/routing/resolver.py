@@ -14,6 +14,8 @@ from typing import Protocol
 
 from langchain_core.messages import BaseMessage
 
+from app.llm.factory import LLMFactory
+
 _REWRITE_SYSTEM_PROMPT = """\
 你是對話歷史消歧器。給定對話歷史與使用者最新一句話，判斷這句話是否依賴前面的
 對話才能理解（例如使用代名詞、省略主詞、承接前一個話題的追問）。
@@ -36,17 +38,15 @@ class QueryRewriter(Protocol):
 
 
 class LLMQueryRewriter:
-    """用 Gemini 做 query 改寫。`model` 可注入以利測試/替換模型。"""
+    """用 `LLMFactory.get_model()` 做 query 改寫（依 `LLM_PROVIDER_TYPE`，含 fallback model 與 timeout）。
+    `model` 可注入以利測試/替換模型。
+    """
 
     def __init__(self, model=None):
         self._model = model
 
     def _get_model(self):
-        if self._model is None:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-
-            self._model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
-        return self._model
+        return self._model or LLMFactory.get_model()
 
     async def rewrite(self, query: str, history: list[BaseMessage]) -> str:
         # `msg.type` is langchain's role discriminator ("human"/"ai"/…), and

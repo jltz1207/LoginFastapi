@@ -109,3 +109,26 @@ def test_rewriter_cancellation_propagates():
     except asyncio.CancelledError:
         return
     raise AssertionError("CancelledError was swallowed")
+
+
+def test_llm_rewriter_uses_llm_factory(monkeypatch):
+    from langchain_core.messages import AIMessage as _AI
+
+    from app.llm.factory import LLMFactory
+    from app.routing.resolver import LLMQueryRewriter
+
+    class _FakeModel:
+        def __init__(self):
+            self.messages = None
+
+        async def ainvoke(self, messages):
+            self.messages = messages
+            return _AI("退款政策的第二點是什麼？")
+
+    fake = _FakeModel()
+    monkeypatch.setattr(LLMFactory, "get_model", classmethod(lambda cls, tools=None: fake))
+
+    result = asyncio.run(LLMQueryRewriter().rewrite("那第二點呢？", [HumanMessage("退款政策有哪幾點？")]))
+
+    assert result == "退款政策的第二點是什麼？"
+    assert fake.messages is not None
