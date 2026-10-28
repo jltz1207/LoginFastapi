@@ -217,6 +217,62 @@ def test_cost_cap_stops_after_the_round():
     assert "cost_cap" in update["trace"][-1]
 
 
+def _usage_model(total_tokens, n_messages=10):
+    """A real LangChain chat model (fires callbacks) whose every reply reports `total_tokens`."""
+    from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+
+    return GenericFakeChatModel(
+        messages=iter(
+            AIMessage(
+                content="answer",
+                usage_metadata={"input_tokens": 0, "output_tokens": total_tokens, "total_tokens": total_tokens},
+            )
+            for _ in range(n_messages)
+        )
+    )
+
+
+class _LLMDecomposer:
+    """Calls a real chat model per round, so its usage reaches the callback."""
+
+    def __init__(self, model, rounds):
+        self._model = model
+        self._rounds = list(rounds)
+
+    async def decompose(self, query, hops_so_far):
+        await self._model.ainvoke("decompose")
+        return self._rounds.pop(0) if self._rounds else []
+
+
+def test_token_count_includes_decompose_and_synthesize():
+    model = _usage_model(total_tokens=100)
+    branch = MultiHopBranch(
+        decomposer=_LLMDecomposer(model, [["A"]]),
+        retriever=_retriever(),
+        synthesizer=LLMMultiHopSynthesizer(model=model),
+    )
+    state = _state().model_copy(update={"token_count": 999})
+
+    update = asyncio.run(branch(state))
+
+    # 2 decompose calls (["A"], then converge) + 1 synthesize
+    assert update["token_count"] == 300
+
+
+def test_cost_cap_counts_llm_tokens():
+    branch = MultiHopBranch(
+        decomposer=_LLMDecomposer(_usage_model(total_tokens=5_000), [["A"], ["B"], ["C"]]),
+        retriever=_retriever(),
+        synthesizer=_StubSynthesizer(),
+        max_cost_units=5_000,
+    )
+
+    update = asyncio.run(branch(_state()))
+
+    assert [c.chunk_id for c in update["documents"]] == ["doc:A"]
+    assert "cost_cap" in update["trace"][-1]
+
+
 def test_default_retriever_is_hybrid_with_rerank(monkeypatch):
     from app.routing.branches import multi_hop
 

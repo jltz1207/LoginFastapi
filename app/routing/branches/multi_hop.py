@@ -3,8 +3,9 @@
 四項護欄缺一不可上線（CLAUDE.md 開發約定），全部是建構子的必填數值型參數，
 不能傳 `None` 關掉：
 1. `recursion_limit`：最多幾輪 decompose -> retrieve 迭代。
-2. `max_cost_units`：累積 token-ish 用量上限（近似值，不是校準過的業務成本，
-   只用來當安全煞車，不可拿去當 M8/M9 的 cost-weighted error 依據）。
+2. `max_cost_units`：累積用量上限 = 檢索字數 + decompose 的 LLM token（近似值，不是校準過的
+   業務成本，只用來當安全煞車，不可拿去當 M8/M9 的 cost-weighted error 依據）。
+   synthesize 在護欄之後才呼叫，不受這個上限約束，但會算進回寫的 `token_count`。
 3. sub-query 去重：同一輪或跨輪重複的 sub-query（正規化後）不再重新檢索。
 4. `global_timeout_seconds`：整個 hop 迴圈的全域逾時，用 `asyncio.wait_for` 包住。
 
@@ -21,6 +22,7 @@ from typing import TYPE_CHECKING, Protocol
 from langchain_core.runnables import Runnable
 
 from app.llm.factory import LLMFactory
+from app.llm.usage import TokenCounter, count_llm_tokens
 from pydantic import BaseModel
 
 from app.rag.prompts import MULTI_HOP_DECOMPOSE_PROMPT
@@ -61,7 +63,7 @@ def _normalize(sub_query: str) -> str:
     return re.sub(r"\s+", "", sub_query.strip().lower())
 
 def _estimate_cost(sub_query: str, chunks: list[Chunk]) -> int:
-    """token-ish 用量估算，只給護欄用的近似值，不是校準過的業務成本。"""
+    """檢索部分的 token-ish 用量估算，只給護欄用的近似值，不是校準過的業務成本。"""
     return len(sub_query) + sum(len(c.content) for c in chunks)
 
 # decomposer 每個 hop 看到的摘錄：前幾個 chunk、每個截斷到固定長度，控制 prompt 大小。
@@ -156,31 +158,41 @@ class MultiHopBranch:
         # 和其他三個護欄一樣是「停下來但保留成果」。
         hops: list[HopResult] = []
         guardrail_hits: list[str] = []
-        try:
-            await asyncio.wait_for(
-                self._run_hops(retriever, query, hops, guardrail_hits),
-                timeout=self._global_timeout_seconds,
-            )
-        except asyncio.TimeoutError:
-            guardrail_hits.append("global_timeout")
+        # 收集這個 branch 所有 LLM 呼叫的 usage（decompose 是 structured output，拿不到 `usage_metadata`）
+        with count_llm_tokens() as usage:
+            try:
+                await asyncio.wait_for(
+                    self._run_hops(retriever, query, hops, guardrail_hits, usage),
+                    timeout=self._global_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                guardrail_hits.append("global_timeout")
 
-        if hops:
-            answer = await self._synthesizer.synthesize(query, hops)
-        else:
-            answer = "多跳查詢在護欄限制內沒有取得足夠資訊，無法完整回答。"
+            if hops:
+                answer = await self._synthesizer.synthesize(query, hops)
+            else:
+                answer = "多跳查詢在護欄限制內沒有取得足夠資訊，無法完整回答。"
+            token_count = usage.total_tokens
 
         return {
             "answer": answer,
             "documents": [chunk for hop in hops for chunk in hop.chunks],
+            # 本次 run 的絕對值（budget counter 是 last-write-wins，見 `app/agent/state.py`）
+            "token_count": token_count,
             "trace": state.trace
             + [f"multi_hop: hops={len(hops)} kb={knowledge_base_id} guardrails={guardrail_hits}"],
         }
 
     async def _run_hops(
-        self, retriever: Runnable, query: str, hops: list[HopResult], guardrail_hits: list[str]
+        self,
+        retriever: Runnable,
+        query: str,
+        hops: list[HopResult],
+        guardrail_hits: list[str],
+        usage: TokenCounter,
     ) -> None:
         asked: set[str] = set()
-        cost_units = 0
+        retrieval_units = 0
 
         for _ in range(self._recursion_limit):
             sub_queries = await self._decomposer.decompose(query, hops)
@@ -198,9 +210,10 @@ class MultiHopBranch:
             # cost 檢查因此在整輪結束後做，一輪最多超出上限一輪的量。
             results = await asyncio.gather(*(self.retrieve(retriever, q) for q in new_sub_queries))
             for sub_query, chunks in zip(new_sub_queries, results):
-                cost_units += _estimate_cost(sub_query, chunks)
+                retrieval_units += _estimate_cost(sub_query, chunks)
                 hops.append(HopResult(sub_query=sub_query, chunks=chunks))
-            if cost_units >= self._max_cost_units:
+            # cost = 檢索字數 + 目前為止 decompose 用掉的 LLM token
+            if retrieval_units + usage.total_tokens >= self._max_cost_units:
                 guardrail_hits.append("cost_cap")
                 return
         else:
